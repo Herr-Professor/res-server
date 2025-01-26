@@ -8,4 +8,14 @@ services:
       - key: NODE_ENV
         value: production
       - key: DATABASE_URL
-        sync: false # Will be set manually in Render dashboard 
+        sync: false # Will be set manually in Render dashboard
+      - key: JWT_SECRET
+        sync: false # Will be set manually in Render dashboard
+      - key: EMAIL_USER
+        sync: false # Will be set manually in Render dashboard
+      - key: EMAIL_PASS
+        sync: false # Will be set manually in Render dashboard
+      - key: EMAIL_HOST
+        value: smtp.gmail.com
+      - key: EMAIL_PORT
+        value: "587" 
