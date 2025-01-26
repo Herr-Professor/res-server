@@ -6,7 +6,6 @@ const fs = require('fs');
 const authRoutes = require('./routes/auth');
 const resumeRoutes = require('./routes/resumes');
 const adminRoutes = require('./routes/admin');
-const contactRoutes = require('./routes/contact');
 const { authenticateToken, isAdmin } = require('./middleware/auth');
 
 const app = express();
@@ -35,7 +34,6 @@ app.get('/health', (req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/resumes', authenticateToken, resumeRoutes);
 app.use('/api/admin', authenticateToken, isAdmin, adminRoutes);
-app.use('/api/contact', contactRoutes);
 
 // Error handling
 app.use((err, req, res, next) => {
