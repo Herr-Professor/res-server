@@ -33,8 +33,13 @@ app.use(express.urlencoded({ extended: true }));
 // Static files
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// Health check endpoint with DB check
-app.get('/health', async (req, res) => {
+// Simple health check endpoint
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'healthy' });
+});
+
+// Full health check endpoint
+app.get('/health/full', async (req, res) => {
   try {
     await prisma.$queryRaw`SELECT 1`;
     res.json({ 
@@ -139,10 +144,19 @@ async function startServer() {
     }
 
     // Start server
-    app.listen(PORT, () => {
+    const server = app.listen(PORT, '0.0.0.0', () => {
       console.log(`Server is running on port ${PORT}`);
       console.log(`Environment: ${process.env.NODE_ENV}`);
       console.log(`Uploads directory: ${uploadsDir}`);
+    });
+
+    // Handle server errors
+    server.on('error', (error) => {
+      console.error('Server error:', error);
+      if (error.code === 'EADDRINUSE') {
+        console.error(`Port ${PORT} is already in use`);
+        process.exit(1);
+      }
     });
   } catch (error) {
     console.error('Failed to start server:', error);
