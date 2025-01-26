@@ -45,7 +45,7 @@ router.post('/register', async (req, res) => {
 
     // Generate JWT for immediate login
     const token = jwt.sign(
-      { id: user.id, role: user.role },
+      { userId: user.id, role: user.role },
       process.env.JWT_SECRET,
       { expiresIn: '1h' }
     );
@@ -104,7 +104,7 @@ router.post('/login', async (req, res) => {
 
     // Generate JWT
     const token = jwt.sign(
-      { id: user.id, role: user.role },
+      { userId: user.id, role: user.role },
       process.env.JWT_SECRET,
       { expiresIn: '1h' }
     );
