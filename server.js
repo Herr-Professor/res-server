@@ -13,7 +13,7 @@ const prisma = new PrismaClient({
   log: ['query', 'error', 'warn']
 });
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 
 // Ensure uploads directory exists
 const uploadsDir = path.join(__dirname, 'uploads');
@@ -33,8 +33,8 @@ app.use(express.urlencoded({ extended: true }));
 // Static files
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
-// Simple health check endpoint
-app.get('/health', (req, res) => {
+// Health check endpoint for Render
+app.get('/healthx', (req, res) => {
   res.status(200).json({ status: 'healthy' });
 });
 

@@ -9,7 +9,7 @@ services:
       - key: NODE_ENV
         value: production
       - key: PORT
-        value: "3000"
+        value: "10000"
       - key: DATABASE_URL
         sync: false # Will be set manually in Render dashboard
       - key: JWT_SECRET
@@ -22,6 +22,5 @@ services:
         value: smtp.gmail.com
       - key: EMAIL_PORT
         value: "587"
-    healthCheckPath: /health
-    autoDeploy: true
-    port: 3000 
+    healthCheckPath: /healthx
+    autoDeploy: true 
