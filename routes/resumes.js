@@ -3,9 +3,19 @@ const multer = require('multer');
 const path = require('path');
 const { PrismaClient } = require('@prisma/client');
 const fs = require('fs');
+const cors = require('cors');
 
 const router = express.Router();
 const prisma = new PrismaClient();
+
+// CORS configuration for file uploads
+const corsOptions = {
+  origin: ['https://resumeoptimizer.io', 'http://localhost:5173'],
+  credentials: true,
+  methods: ['POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Origin', 'Accept'],
+  maxAge: 600
+};
 
 // Ensure uploads directory exists
 const uploadsDir = path.join(process.cwd(), 'uploads');
@@ -54,8 +64,12 @@ const getPriceForPlan = (plan) => {
   return prices[plan] || prices.basic;
 };
 
-// Submit resume route
-router.post('/', upload.single('resume'), async (req, res) => {
+// Submit resume route with specific CORS handling
+router.post('/', cors(corsOptions), upload.single('resume'), async (req, res) => {
+  // Add CORS headers explicitly
+  res.header('Access-Control-Allow-Origin', req.headers.origin);
+  res.header('Access-Control-Allow-Credentials', true);
+
   try {
     console.log('Received resume submission request:', {
       body: req.body,
