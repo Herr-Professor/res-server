@@ -1,4 +1,27 @@
+// Load environment variables first
 require('dotenv').config();
+
+// Log environment variables (safely)
+console.log('Environment configuration:', {
+  nodeEnv: process.env.NODE_ENV,
+  stripeKeyPresent: !!process.env.STRIPE_SECRET_KEY,
+  stripeKeyPrefix: process.env.STRIPE_SECRET_KEY ? process.env.STRIPE_SECRET_KEY.substring(0, 8) : 'Not set',
+  stripeKeyValid: process.env.STRIPE_SECRET_KEY?.startsWith('sk_test_') || process.env.STRIPE_SECRET_KEY?.startsWith('sk_live_'),
+  stripeWebhookPresent: !!process.env.STRIPE_WEBHOOK_SECRET,
+  stripeWebhookPrefix: process.env.STRIPE_WEBHOOK_SECRET ? process.env.STRIPE_WEBHOOK_SECRET.substring(0, 8) : 'Not set'
+});
+
+// Validate Stripe configuration
+if (!process.env.STRIPE_SECRET_KEY) {
+  console.error('ERROR: STRIPE_SECRET_KEY is not set in environment variables');
+} else if (!process.env.STRIPE_SECRET_KEY.startsWith('sk_test_') && !process.env.STRIPE_SECRET_KEY.startsWith('sk_live_')) {
+  console.error('ERROR: STRIPE_SECRET_KEY is invalid - must start with sk_test_ or sk_live_');
+}
+
+if (!process.env.STRIPE_WEBHOOK_SECRET) {
+  console.error('ERROR: STRIPE_WEBHOOK_SECRET is not set in environment variables');
+}
+
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
@@ -23,20 +46,35 @@ if (!fs.existsSync(uploadsDir)) {
   console.log(`Created uploads directory at: ${uploadsDir}`);
 }
 
-// Middleware
-app.use(cors({
-  origin: ['https://resumeoptimizer.io', 'http://localhost:5173'],
+// Configure CORS
+const allowedOrigins = process.env.NODE_ENV === 'production'
+  ? [
+      'https://resumer-frontend.onrender.com',
+      'https://res-server-12bn.onrender.com'
+    ]
+  : ['http://localhost:3000'];
+
+const corsOptions = {
+  origin: function(origin, callback) {
+    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Origin', 'Accept'],
-  exposedHeaders: ['Content-Range', 'X-Content-Range'],
-  maxAge: 600 // Increase preflight cache to 10 minutes
-}));
+  exposedHeaders: ['Content-Range', 'X-Content-Range']
+};
+
+app.use(cors(corsOptions));
 
 // Handle preflight requests for all routes
-app.options('*', cors());
+app.options('*', cors(corsOptions));
 
 app.use(express.json());
+// Use raw body for Stripe webhook
+app.use('/api/payment/webhook', express.raw({ type: 'application/json' }));
+// Use URL-encoded for other routes
 app.use(express.urlencoded({ extended: true }));
 
 // Static files
@@ -117,9 +155,6 @@ app.use('/api/resumes', authenticateToken, resumeRoutes);
 app.use('/api/admin', authenticateToken, isAdmin, adminRoutes);
 app.use('/api/payment', authenticateToken, paymentRoutes);
 
-// Special route for Stripe webhook (needs raw body)
-app.post('/api/payment/webhook', express.raw({ type: 'application/json' }), paymentRoutes);
-
 // Error handling
 app.use((err, req, res, next) => {
   console.error('Error:', err);
@@ -157,20 +192,26 @@ async function startServer() {
     }
 
     // Start server
-    const server = app.listen(PORT, '0.0.0.0', () => {
-      console.log(`Server is running on port ${PORT}`);
+    const server = app.listen(process.env.PORT || 10000, '0.0.0.0', () => {
+      console.log(`Server is running on port ${process.env.PORT || 10000}`);
       console.log(`Environment: ${process.env.NODE_ENV}`);
       console.log(`Uploads directory: ${uploadsDir}`);
+      console.log(`Server URL: ${process.env.NODE_ENV === 'production' 
+        ? 'https://res-server-12bn.onrender.com' 
+        : 'http://localhost:' + (process.env.PORT || 10000)}`);
     });
 
     // Handle server errors
     server.on('error', (error) => {
       console.error('Server error:', error);
       if (error.code === 'EADDRINUSE') {
-        console.error(`Port ${PORT} is already in use`);
+        console.error(`Port ${process.env.PORT || 10000} is already in use`);
         process.exit(1);
       }
     });
+
+    // Log successful startup
+    console.log('Server started successfully');
   } catch (error) {
     console.error('Failed to start server:', error);
     process.exit(1);

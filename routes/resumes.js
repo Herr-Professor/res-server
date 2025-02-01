@@ -10,7 +10,14 @@ const prisma = new PrismaClient();
 
 // CORS configuration for file uploads
 const corsOptions = {
-  origin: ['https://resumeoptimizer.io', 'http://localhost:5173'],
+  origin: function (origin, callback) {
+    const allowedOrigins = ['https://resumeoptimizer.io', 'http://localhost:5173'];
+    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true,
   methods: ['POST', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Origin', 'Accept'],
@@ -66,14 +73,18 @@ const getPriceForPlan = (plan) => {
 
 // Submit resume route with specific CORS handling
 router.post('/', cors(corsOptions), upload.single('resume'), async (req, res) => {
-  // Add CORS headers explicitly
-  res.header('Access-Control-Allow-Origin', req.headers.origin);
-  res.header('Access-Control-Allow-Credentials', true);
-
   try {
     console.log('Received resume submission request:', {
       body: req.body,
-      file: req.file ? { ...req.file, buffer: undefined } : null
+      file: req.file ? {
+        filename: req.file.filename,
+        originalname: req.file.originalname,
+        mimetype: req.file.mimetype,
+        size: req.file.size,
+        path: req.file.path
+      } : null,
+      headers: req.headers,
+      origin: req.headers.origin
     });
 
     const { userId, plan, jobInterest, description } = req.body;
@@ -89,6 +100,19 @@ router.post('/', cors(corsOptions), upload.single('resume'), async (req, res) =>
       return res.status(400).json({ error: 'User ID is required' });
     }
 
+    // Verify the uploads directory exists
+    if (!fs.existsSync(uploadsDir)) {
+      console.log('Creating uploads directory at:', uploadsDir);
+      fs.mkdirSync(uploadsDir, { recursive: true });
+    }
+
+    // Verify file was saved
+    if (!fs.existsSync(file.path)) {
+      console.error('File was not saved to disk:', file.path);
+      return res.status(500).json({ error: 'File was not saved properly' });
+    }
+
+    console.log('Creating resume record in database...');
     const resume = await prisma.resume.create({
       data: {
         userId: parseInt(userId),
@@ -109,7 +133,11 @@ router.post('/', cors(corsOptions), upload.single('resume'), async (req, res) =>
       resumeId: resume.id
     });
   } catch (error) {
-    console.error('Upload error:', error);
+    console.error('Upload error details:', {
+      error: error.message,
+      stack: error.stack,
+      code: error.code
+    });
     res.status(500).json({ 
       error: 'Error uploading resume',
       details: process.env.NODE_ENV === 'development' ? error.message : undefined
