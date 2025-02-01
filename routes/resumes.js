@@ -11,11 +11,16 @@ const prisma = new PrismaClient();
 const uploadsDir = path.join(process.cwd(), 'uploads');
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
+  console.log('Created uploads directory at:', uploadsDir);
 }
 
 // Configure multer for file upload
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
+    // Ensure directory exists before saving
+    if (!fs.existsSync(uploadsDir)) {
+      fs.mkdirSync(uploadsDir, { recursive: true });
+    }
     cb(null, uploadsDir);
   },
   filename: function (req, file, cb) {
@@ -52,11 +57,22 @@ const getPriceForPlan = (plan) => {
 // Submit resume route
 router.post('/', upload.single('resume'), async (req, res) => {
   try {
+    console.log('Received resume submission request:', {
+      body: req.body,
+      file: req.file ? { ...req.file, buffer: undefined } : null
+    });
+
     const { userId, plan, jobInterest, description } = req.body;
     const file = req.file;
 
     if (!file) {
+      console.error('No file uploaded');
       return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    if (!userId) {
+      console.error('No userId provided');
+      return res.status(400).json({ error: 'User ID is required' });
     }
 
     const resume = await prisma.resume.create({
@@ -67,9 +83,12 @@ router.post('/', upload.single('resume'), async (req, res) => {
         plan,
         jobInterest,
         description,
-        price: getPriceForPlan(plan)
+        price: getPriceForPlan(plan),
+        paymentStatus: 'pending'
       }
     });
+
+    console.log('Resume created successfully:', resume);
 
     res.status(201).json({
       message: 'Resume submitted successfully',
@@ -77,7 +96,10 @@ router.post('/', upload.single('resume'), async (req, res) => {
     });
   } catch (error) {
     console.error('Upload error:', error);
-    res.status(500).json({ error: 'Error uploading resume' });
+    res.status(500).json({ 
+      error: 'Error uploading resume',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 });
 

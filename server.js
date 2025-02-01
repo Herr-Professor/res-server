@@ -174,8 +174,8 @@ async function startServer() {
 // Handle shutdown
 process.on('SIGTERM', async () => {
   console.log('SIGTERM received. Shutting down gracefully...');
-  await prisma.$disconnect();
+    await prisma.$disconnect();
   process.exit(0);
-});
+  }); 
 
 startServer().catch(console.error); 
