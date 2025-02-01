@@ -25,7 +25,7 @@ if (!fs.existsSync(uploadsDir)) {
 
 // Middleware
 app.use(cors({
-  origin: '*',  // Allow all origins temporarily
+  origin: ['https://resumeoptimizer.io', 'http://localhost:5173'],  // Allow main domain and local development
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
@@ -109,10 +109,10 @@ app.get('/debug', async (req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/resumes', authenticateToken, resumeRoutes);
 app.use('/api/admin', authenticateToken, isAdmin, adminRoutes);
-app.use('/api/payments', authenticateToken, paymentRoutes);
+app.use('/api/payment', authenticateToken, paymentRoutes);
 
 // Special route for Stripe webhook (needs raw body)
-app.post('/api/payments/webhook', express.raw({ type: 'application/json' }), paymentRoutes);
+app.post('/api/payment/webhook', express.raw({ type: 'application/json' }), paymentRoutes);
 
 // Error handling
 app.use((err, req, res, next) => {
