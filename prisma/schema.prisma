@@ -21,19 +21,21 @@ model User {
 }
 
 model Resume {
-  id              Int       @id @default(autoincrement())
-  userId          Int
-  user            User      @relation(fields: [userId], references: [id])
-  fileName        String
-  originalFileName String
-  status          String    @default("pending")
-  plan            String
-  jobInterest     String?
-  description     String?
-  feedback        String?
-  optimizedResume String?
-  paymentStatus   String    @default("pending")
-  price           Float
-  submittedAt     DateTime  @default(now())
-  completedAt     DateTime?
+  id                   Int       @id @default(autoincrement())
+  userId               Int
+  user                 User      @relation(fields: [userId], references: [id])
+  fileName             String
+  originalFileName     String
+  status              String    @default("pending")
+  plan                String
+  jobInterest         String?
+  description         String?
+  feedback            String?
+  optimizedResume     String?
+  paymentStatus       String    @default("pending")
+  price               Float
+  submittedAt         DateTime  @default(now())
+  completedAt         DateTime?
+  stripePaymentIntentId String?
+  stripeCustomerId    String?
 } 

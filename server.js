@@ -7,6 +7,7 @@ const { PrismaClient } = require('@prisma/client');
 const authRoutes = require('./routes/auth');
 const resumeRoutes = require('./routes/resumes');
 const adminRoutes = require('./routes/admin');
+const paymentRoutes = require('./routes/payments');
 const { authenticateToken, isAdmin } = require('./middleware/auth');
 
 const prisma = new PrismaClient({
@@ -24,8 +25,10 @@ if (!fs.existsSync(uploadsDir)) {
 
 // Middleware
 app.use(cors({
-  origin: '*', // Temporarily allow all origins for testing
-  credentials: true
+  origin: '*',  // Allow all origins temporarily
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -106,6 +109,10 @@ app.get('/debug', async (req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/resumes', authenticateToken, resumeRoutes);
 app.use('/api/admin', authenticateToken, isAdmin, adminRoutes);
+app.use('/api/payments', authenticateToken, paymentRoutes);
+
+// Special route for Stripe webhook (needs raw body)
+app.post('/api/payments/webhook', express.raw({ type: 'application/json' }), paymentRoutes);
 
 // Error handling
 app.use((err, req, res, next) => {
