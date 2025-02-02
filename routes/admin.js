@@ -32,37 +32,53 @@ const upload = multer({
   }
 });
 
-// Get all submissions
+// Get all submissions with pagination
 router.get('/submissions', async (req, res) => {
   try {
-    const submissions = await prisma.resume.findMany({
-      select: {
-        id: true,
-        originalFileName: true,
-        fileName: true,
-        optimizedResume: true,
-        status: true,
-        submittedAt: true,
-        completedAt: true,
-        feedback: true,
-        plan: true,
-        price: true,
-        jobInterest: true,
-        description: true,
-        user: {
-          select: {
-            id: true,
-            name: true,
-            email: true
-          }
-        }
-      },
-      orderBy: {
-        submittedAt: 'desc'
-      }
-    });
+    const page = parseInt(req.query.page) || 1;
+    const limit = 10;
+    const skip = (page - 1) * limit;
 
-    res.json(submissions);
+    const [submissions, total] = await Promise.all([
+      prisma.resume.findMany({
+        skip,
+        take: limit,
+        select: {
+          id: true,
+          originalFileName: true,
+          fileName: true,
+          optimizedResume: true,
+          status: true,
+          submittedAt: true,
+          completedAt: true,
+          feedback: true,
+          plan: true,
+          price: true,
+          paymentStatus: true,
+          paymentAmount: true,
+          jobInterest: true,
+          description: true,
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true
+            }
+          }
+        },
+        orderBy: {
+          submittedAt: 'desc'
+        }
+      }),
+      prisma.resume.count()
+    ]);
+
+    res.json({
+      submissions,
+      total,
+      pages: Math.ceil(total / limit),
+      currentPage: page
+    });
   } catch (error) {
     console.error('Fetch error:', error);
     res.status(500).json({ error: 'Error fetching submissions' });
@@ -152,29 +168,60 @@ router.put('/submissions/:id', upload.single('optimizedResume'), async (req, res
   }
 });
 
-// Get statistics
+// Get enhanced statistics including payment info
 router.get('/stats', async (req, res) => {
   try {
-    const [totalSubmissions, pendingSubmissions, completedSubmissions, totalRevenue] = await Promise.all([
+    const [
+      totalSubmissions,
+      pendingSubmissions,
+      completedSubmissions,
+      paidSubmissions,
+      totalRevenue,
+      avgResponseTime
+    ] = await Promise.all([
       prisma.resume.count(),
-      prisma.resume.count({
-        where: { status: 'pending' }
-      }),
-      prisma.resume.count({
-        where: { status: 'completed' }
-      }),
+      prisma.resume.count({ where: { status: 'pending' } }),
+      prisma.resume.count({ where: { status: 'completed' } }),
+      prisma.resume.count({ where: { paymentStatus: 'success' } }),
       prisma.resume.aggregate({
         _sum: {
-          price: true
+          paymentAmount: true
+        },
+        where: {
+          paymentStatus: 'success'
+        }
+      }),
+      prisma.resume.findMany({
+        where: {
+          status: 'completed',
+          completedAt: { not: null }
+        },
+        select: {
+          submittedAt: true,
+          completedAt: true
         }
       })
     ]);
+
+    // Calculate average response time in hours
+    const responseTime = avgResponseTime.reduce((acc, curr) => {
+      const submitted = new Date(curr.submittedAt);
+      const completed = new Date(curr.completedAt);
+      return acc + (completed - submitted) / (1000 * 60 * 60);
+    }, 0);
+
+    const averageResponseTime = avgResponseTime.length > 0 
+      ? Math.round(responseTime / avgResponseTime.length) 
+      : 0;
 
     res.json({
       totalSubmissions,
       pendingSubmissions,
       completedSubmissions,
-      totalRevenue: totalRevenue._sum.price || 0
+      paidSubmissions,
+      totalRevenue: totalRevenue._sum.paymentAmount || 0,
+      conversionRate: totalSubmissions ? (paidSubmissions / totalSubmissions * 100).toFixed(1) : 0,
+      averageResponseTime
     });
   } catch (error) {
     console.error('Stats error:', error);
