@@ -119,7 +119,7 @@ async function startServer() {
     const server = app.listen(PORT, '0.0.0.0', () => {
       console.log(`Server is running on port ${PORT}`);
       console.log(`Environment: ${process.env.NODE_ENV}`);
-      console.log(`Client URL: ${process.env.CLIENT_URL || 'http://localhost:5173'}`);
+      console.log(`Client URL: ${process.env.CLIENT_URL || 'http://resumeoptimizer.io'}`);
       console.log(`Uploads directory: ${uploadsDir}`);
       
       // Log available routes
