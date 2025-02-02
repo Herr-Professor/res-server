@@ -7,10 +7,20 @@ const multer = require('multer');
 const router = express.Router();
 const prisma = new PrismaClient();
 
+// Define uploads directory based on environment
+const uploadsDir = process.env.NODE_ENV === 'production'
+  ? path.join('/tmp', 'uploads')  // Use /tmp for Render's ephemeral storage
+  : path.join(process.cwd(), 'uploads');
+
+// Ensure uploads directory exists
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+
 // Configure multer for optimized resume upload
 const storage = multer.diskStorage({
   destination: function (req, file, cb) {
-    cb(null, 'uploads/');
+    cb(null, uploadsDir);
   },
   filename: function (req, file, cb) {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
@@ -121,21 +131,38 @@ router.get('/submissions/:id/download-optimized', async (req, res) => {
     });
 
     if (!resume || !resume.optimizedResume) {
-      return res.status(404).json({ error: 'Optimized resume not found' });
+      console.error('Resume or optimized file not found in database:', resumeId);
+      return res.status(404).json({ 
+        error: 'Optimized resume not found',
+        details: 'The optimized version of this resume is not available'
+      });
     }
 
-    const filePath = path.join(process.cwd(), 'uploads', resume.optimizedResume);
+    const filePath = path.join(uploadsDir, resume.optimizedResume);
     console.log('Attempting to download optimized file from:', filePath);
     
     if (!fs.existsSync(filePath)) {
       console.error('File not found at path:', filePath);
-      return res.status(404).json({ error: 'File not found' });
+      // Update the resume record if file is missing
+      await prisma.resume.update({
+        where: { id: resumeId },
+        data: {
+          optimizedResume: null
+        }
+      });
+      return res.status(404).json({ 
+        error: 'File not found',
+        details: 'The optimized resume file is no longer available'
+      });
     }
 
     res.download(filePath, `optimized-${resume.originalFileName}`);
   } catch (error) {
     console.error('Download error:', error);
-    res.status(500).json({ error: 'Error downloading optimized resume' });
+    res.status(500).json({ 
+      error: 'Error downloading optimized resume',
+      details: process.env.NODE_ENV === 'development' ? error.message : 'An unexpected error occurred'
+    });
   }
 });
 
