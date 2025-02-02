@@ -83,6 +83,15 @@ router.get('/submissions', async (req, res) => {
       prisma.resume.count()
     ]);
 
+    // Log the first submission for debugging
+    if (submissions.length > 0) {
+      console.log('Sample submission data:', {
+        id: submissions[0].id,
+        jobInterest: submissions[0].jobInterest,
+        description: submissions[0].description?.substring(0, 100) + '...'
+      });
+    }
+
     res.json({
       submissions,
       total,
@@ -104,21 +113,31 @@ router.get('/submissions/:id/download-original', async (req, res) => {
     });
 
     if (!resume) {
-      return res.status(404).json({ error: 'Resume not found' });
+      console.error('Resume not found in database:', resumeId);
+      return res.status(404).json({ 
+        error: 'Resume not found',
+        details: 'The requested resume does not exist'
+      });
     }
 
-    const filePath = path.join(process.cwd(), 'uploads', resume.fileName);
+    const filePath = path.join(uploadsDir, resume.fileName);
     console.log('Attempting to download file from:', filePath);
     
     if (!fs.existsSync(filePath)) {
       console.error('File not found at path:', filePath);
-      return res.status(404).json({ error: 'File not found' });
+      return res.status(404).json({ 
+        error: 'File not found',
+        details: 'The resume file is no longer available'
+      });
     }
 
     res.download(filePath, resume.originalFileName);
   } catch (error) {
     console.error('Download error:', error);
-    res.status(500).json({ error: 'Error downloading resume' });
+    res.status(500).json({ 
+      error: 'Error downloading resume',
+      details: process.env.NODE_ENV === 'development' ? error.message : 'An unexpected error occurred'
+    });
   }
 });
 
