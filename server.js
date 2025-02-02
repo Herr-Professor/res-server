@@ -1,32 +1,10 @@
-// Load environment variables first
 require('dotenv').config();
-
-// Log environment variables (safely)
-console.log('Environment configuration:', {
-  nodeEnv: process.env.NODE_ENV,
-  stripeKeyPresent: !!process.env.STRIPE_SECRET_KEY,
-  stripeKeyPrefix: process.env.STRIPE_SECRET_KEY ? process.env.STRIPE_SECRET_KEY.substring(0, 8) : 'Not set',
-  stripeKeyValid: process.env.STRIPE_SECRET_KEY?.startsWith('sk_test_') || process.env.STRIPE_SECRET_KEY?.startsWith('sk_live_'),
-  stripeWebhookPresent: !!process.env.STRIPE_WEBHOOK_SECRET,
-  stripeWebhookPrefix: process.env.STRIPE_WEBHOOK_SECRET ? process.env.STRIPE_WEBHOOK_SECRET.substring(0, 8) : 'Not set'
-});
-
-// Validate Stripe configuration
-if (!process.env.STRIPE_SECRET_KEY) {
-  console.error('ERROR: STRIPE_SECRET_KEY is not set in environment variables');
-} else if (!process.env.STRIPE_SECRET_KEY.startsWith('sk_test_') && !process.env.STRIPE_SECRET_KEY.startsWith('sk_live_')) {
-  console.error('ERROR: STRIPE_SECRET_KEY is invalid - must start with sk_test_ or sk_live_');
-}
-
-if (!process.env.STRIPE_WEBHOOK_SECRET) {
-  console.error('ERROR: STRIPE_WEBHOOK_SECRET is not set in environment variables');
-}
-
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 const { PrismaClient } = require('@prisma/client');
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const authRoutes = require('./routes/auth');
 const resumeRoutes = require('./routes/resumes');
 const adminRoutes = require('./routes/admin');
@@ -46,35 +24,39 @@ if (!fs.existsSync(uploadsDir)) {
   console.log(`Created uploads directory at: ${uploadsDir}`);
 }
 
-// Configure CORS
-const allowedOrigins = process.env.NODE_ENV === 'production'
-  ? [
-      'https://resumer-frontend.onrender.com',
-      'https://res-server-12bn.onrender.com'
-    ]
-  : ['http://localhost:3000'];
+// Request logging middleware
+app.use((req, res, next) => {
+  console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
+  next();
+});
 
-const corsOptions = {
+// Middleware
+const allowedOrigins = [
+  'https://resumeoptimizer.io',
+  'https://www.resumeoptimizer.io'
+];
+
+app.use(cors({
   origin: function(origin, callback) {
-    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.indexOf(origin) === -1) {
+      const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
+      return callback(new Error(msg), false);
     }
+    return callback(null, true);
   },
   credentials: true,
-  exposedHeaders: ['Content-Range', 'X-Content-Range']
-};
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
 
-app.use(cors(corsOptions));
+// Special handling for Stripe webhook
+app.post('/api/payment/webhook', express.raw({type: 'application/json'}));
 
-// Handle preflight requests for all routes
-app.options('*', cors(corsOptions));
-
+// Regular middleware for other routes
 app.use(express.json());
-// Use raw body for Stripe webhook
-app.use('/api/payment/webhook', express.raw({ type: 'application/json' }));
-// Use URL-encoded for other routes
 app.use(express.urlencoded({ extended: true }));
 
 // Static files
@@ -85,75 +67,17 @@ app.get('/healthx', (req, res) => {
   res.status(200).json({ status: 'healthy' });
 });
 
-// Full health check endpoint
-app.get('/health/full', async (req, res) => {
-  try {
-    await prisma.$queryRaw`SELECT 1`;
-    res.json({ 
-      status: 'healthy',
-      database: 'connected',
-      timestamp: new Date().toISOString()
-    });
-  } catch (error) {
-    console.error('Health check failed:', error);
-    res.status(500).json({ 
-      status: 'unhealthy',
-      database: 'disconnected',
-      error: error.message,
-      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
-    });
-  }
-});
-
-// Debug endpoint
-app.get('/debug', async (req, res) => {
-  try {
-    let dbTest;
-    try {
-      dbTest = await prisma.$queryRaw`SELECT 1`;
-    } catch (dbError) {
-      console.error('Database test failed:', dbError);
-      dbTest = null;
-    }
-
-    // Parse DATABASE_URL safely
-    let dbUrlSafe = 'Not set';
-    if (process.env.DATABASE_URL) {
-      try {
-        const url = new URL(process.env.DATABASE_URL);
-        dbUrlSafe = `${url.protocol}//${url.hostname}:${url.port}${url.pathname}`;
-      } catch (e) {
-        dbUrlSafe = 'Invalid URL format';
-      }
-    }
-
-    res.json({
-      env: {
-        nodeEnv: process.env.NODE_ENV,
-        port: PORT,
-        databaseUrl: dbUrlSafe,
-        jwtSecret: process.env.JWT_SECRET ? 'Set' : 'Not set'
-      },
-      uploads: {
-        directory: uploadsDir,
-        exists: fs.existsSync(uploadsDir)
-      },
-      database: {
-        connected: !!dbTest,
-        test: dbTest
-      }
-    });
-  } catch (error) {
-    console.error('Debug endpoint error:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/resumes', authenticateToken, resumeRoutes);
 app.use('/api/admin', authenticateToken, isAdmin, adminRoutes);
-app.use('/api/payment', authenticateToken, paymentRoutes);
+app.use('/api/payment', paymentRoutes); // Mount payment routes at /api/payment
+
+// 404 handler
+app.use((req, res) => {
+  console.log(`404 - Not Found: ${req.method} ${req.url}`);
+  res.status(404).json({ error: 'Not Found' });
+});
 
 // Error handling
 app.use((err, req, res, next) => {
@@ -192,37 +116,32 @@ async function startServer() {
     }
 
     // Start server
-    const server = app.listen(process.env.PORT || 10000, '0.0.0.0', () => {
-      console.log(`Server is running on port ${process.env.PORT || 10000}`);
+    const server = app.listen(PORT, '0.0.0.0', () => {
+      console.log(`Server is running on port ${PORT}`);
       console.log(`Environment: ${process.env.NODE_ENV}`);
+      console.log(`Client URL: ${process.env.CLIENT_URL || 'http://localhost:5173'}`);
       console.log(`Uploads directory: ${uploadsDir}`);
-      console.log(`Server URL: ${process.env.NODE_ENV === 'production' 
-        ? 'https://res-server-12bn.onrender.com' 
-        : 'http://localhost:' + (process.env.PORT || 10000)}`);
+      
+      // Log available routes
+      console.log('\nAvailable routes:');
+      console.log('- POST /api/payment/create-checkout-session');
+      console.log('- POST /api/resumes');
+      console.log('- POST /api/auth/login');
+      console.log('- POST /api/auth/register');
     });
 
     // Handle server errors
     server.on('error', (error) => {
       console.error('Server error:', error);
       if (error.code === 'EADDRINUSE') {
-        console.error(`Port ${process.env.PORT || 10000} is already in use`);
+        console.error(`Port ${PORT} is already in use`);
         process.exit(1);
       }
     });
-
-    // Log successful startup
-    console.log('Server started successfully');
   } catch (error) {
     console.error('Failed to start server:', error);
     process.exit(1);
   }
 }
-
-// Handle shutdown
-process.on('SIGTERM', async () => {
-  console.log('SIGTERM received. Shutting down gracefully...');
-    await prisma.$disconnect();
-  process.exit(0);
-  }); 
 
 startServer().catch(console.error); 

@@ -3,50 +3,28 @@ const multer = require('multer');
 const path = require('path');
 const { PrismaClient } = require('@prisma/client');
 const fs = require('fs');
-const cors = require('cors');
 
 const router = express.Router();
 const prisma = new PrismaClient();
-
-// CORS configuration for file uploads
-const corsOptions = {
-  origin: function (origin, callback) {
-    const allowedOrigins = ['https://resumeoptimizer.io', 'http://localhost:5173'];
-    if (!origin || allowedOrigins.indexOf(origin) !== -1) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
-  credentials: true,
-  methods: ['POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Origin', 'Accept'],
-  maxAge: 600
-};
 
 // Ensure uploads directory exists
 const uploadsDir = path.join(process.cwd(), 'uploads');
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
-  console.log('Created uploads directory at:', uploadsDir);
 }
 
 // Configure multer for file upload
 const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    // Ensure directory exists before saving
-    if (!fs.existsSync(uploadsDir)) {
-      fs.mkdirSync(uploadsDir, { recursive: true });
-    }
-    cb(null, uploadsDir);
+  destination: (req, file, cb) => {
+    cb(null, 'uploads/');
   },
-  filename: function (req, file, cb) {
+  filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
     cb(null, uniqueSuffix + path.extname(file.originalname));
   }
 });
 
-const upload = multer({
+const upload = multer({ 
   storage: storage,
   fileFilter: (req, file, cb) => {
     if (file.mimetype === 'application/pdf') {
@@ -60,88 +38,31 @@ const upload = multer({
   }
 });
 
-// Get pricing
-const getPriceForPlan = (plan) => {
-  const prices = {
-    basic: 5,
-    premium: 10,
-    urgent: 25,
-    jobApplication: 150
-  };
-  return prices[plan] || prices.basic;
-};
-
-// Submit resume route with specific CORS handling
-router.post('/', cors(corsOptions), upload.single('resume'), async (req, res) => {
+// Upload resume route
+router.post('/', upload.single('resume'), async (req, res) => {
   try {
-    console.log('Received resume submission request:', {
-      body: req.body,
-      file: req.file ? {
-        filename: req.file.filename,
-        originalname: req.file.originalname,
-        mimetype: req.file.mimetype,
-        size: req.file.size,
-        path: req.file.path
-      } : null,
-      headers: req.headers,
-      origin: req.headers.origin
-    });
-
     const { userId, plan, jobInterest, description } = req.body;
-    const file = req.file;
 
-    if (!file) {
-      console.error('No file uploaded');
+    if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
-    if (!userId) {
-      console.error('No userId provided');
-      return res.status(400).json({ error: 'User ID is required' });
-    }
-
-    // Verify the uploads directory exists
-    if (!fs.existsSync(uploadsDir)) {
-      console.log('Creating uploads directory at:', uploadsDir);
-      fs.mkdirSync(uploadsDir, { recursive: true });
-    }
-
-    // Verify file was saved
-    if (!fs.existsSync(file.path)) {
-      console.error('File was not saved to disk:', file.path);
-      return res.status(500).json({ error: 'File was not saved properly' });
-    }
-
-    console.log('Creating resume record in database...');
     const resume = await prisma.resume.create({
       data: {
         userId: parseInt(userId),
-        fileName: file.filename,
-        originalFileName: file.originalname,
+        fileName: req.file.filename,
+        originalFileName: req.file.originalname,
         plan,
         jobInterest,
         description,
-        price: getPriceForPlan(plan),
-        paymentStatus: 'pending'
+        status: 'pending'
       }
     });
 
-    console.log('Resume created successfully:', resume);
-
-    res.status(201).json({
-      message: 'Resume submitted successfully',
-      resumeId: resume.id
-    });
+    res.json(resume);
   } catch (error) {
-    console.error('Upload error details:', {
-      error: error.message,
-      stack: error.stack,
-      code: error.code
-    });
-    res.status(500).json({ 
-      error: 'Error uploading resume',
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
+    console.error('Upload error:', error);
+    res.status(500).json({ error: 'Error uploading resume' });
   }
 });
 
@@ -149,10 +70,46 @@ router.post('/', cors(corsOptions), upload.single('resume'), async (req, res) =>
 router.get('/user/:userId', async (req, res) => {
   try {
     const userId = parseInt(req.params.userId);
+    console.log('Fetching submissions for user:', userId);
+
     const submissions = await prisma.resume.findMany({
       where: { userId },
-      orderBy: { submittedAt: 'desc' }
+      orderBy: { submittedAt: 'desc' },
+      select: {
+        id: true,
+        fileName: true,
+        originalFileName: true,
+        optimizedResume: true,
+        status: true,
+        submittedAt: true,
+        completedAt: true,
+        feedback: true,
+        plan: true,
+        jobInterest: true,
+        description: true,
+        price: true,
+        stripePaymentIntentId: true,
+        paymentStatus: true,
+        paymentAmount: true,
+        user: {
+          select: {
+            email: true,
+            name: true
+          }
+        }
+      }
     });
+
+    console.log('Found submissions:', submissions.length);
+    console.log('Sample submission data:', JSON.stringify(submissions[0], null, 2));
+
+    // Verify payment-related fields
+    const paymentStats = submissions.map(s => ({
+      id: s.id,
+      paymentStatus: s.paymentStatus,
+      paymentAmount: s.paymentAmount
+    }));
+    console.log('Payment stats:', paymentStats);
 
     res.json(submissions);
   } catch (error) {

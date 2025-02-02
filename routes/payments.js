@@ -1,197 +1,256 @@
 const express = require('express');
 const { PrismaClient } = require('@prisma/client');
-
-// Load environment variables
-require('dotenv').config();
-
-// Log Stripe configuration
-console.log('Stripe Configuration:', {
-  secretKeyLength: process.env.STRIPE_SECRET_KEY ? process.env.STRIPE_SECRET_KEY.length : 0,
-  secretKeyPrefix: process.env.STRIPE_SECRET_KEY ? process.env.STRIPE_SECRET_KEY.substring(0, 7) : 'Not set',
-  secretKeyValid: process.env.STRIPE_SECRET_KEY?.startsWith('sk_test_') || process.env.STRIPE_SECRET_KEY?.startsWith('sk_live_'),
-  webhookSecretPresent: !!process.env.STRIPE_WEBHOOK_SECRET
-});
-
-// Initialize Stripe with detailed error handling
-let stripe;
-try {
-  if (!process.env.STRIPE_SECRET_KEY) {
-    throw new Error('STRIPE_SECRET_KEY is not set in environment variables');
-  }
-  stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
-  console.log('Stripe initialized successfully');
-} catch (error) {
-  console.error('Failed to initialize Stripe:', error);
-  stripe = null;
-}
-
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const router = express.Router();
 const prisma = new PrismaClient();
 
-// Create a payment intent
-router.post('/create-payment-intent', async (req, res) => {
+// Test endpoint to verify Stripe configuration
+router.get('/test-stripe', async (req, res) => {
   try {
-    console.log('Creating payment intent with data:', {
-      plan: req.body.plan,
-      resumeId: req.body.resumeId,
-      stripeKeyPrefix: process.env.STRIPE_SECRET_KEY ? process.env.STRIPE_SECRET_KEY.substring(0, 8) + '...' : 'Not set',
-      stripeInstance: !!stripe,
-      environment: process.env.NODE_ENV
-    });
-
-    if (!stripe) {
-      console.error('Stripe is not initialized');
-      throw new Error('Stripe is not properly initialized. Check server logs for details.');
-    }
-
-    const { plan, resumeId } = req.body;
-    console.log('Received request body:', req.body);
-
-    if (!plan || !resumeId) {
-      console.error('Missing required fields:', { plan, resumeId });
-      throw new Error(`Missing required fields: ${!plan ? 'plan' : ''} ${!resumeId ? 'resumeId' : ''}`);
-    }
-
-    // Get price for the plan
-    const prices = {
-      basic: 500, // $5.00 in cents
-      premium: 1000, // $10.00 in cents
-      urgent: 2500, // $25.00 in cents
-      jobApplication: 15000 // $150.00 in cents
-    };
-
-    const amount = prices[plan];
+    console.log('Testing Stripe connection...');
+    console.log('Stripe key length:', process.env.STRIPE_SECRET_KEY?.length);
+    console.log('Stripe key prefix:', process.env.STRIPE_SECRET_KEY?.substring(0, 7));
     
-    if (!amount) {
-      console.error('Invalid plan:', plan);
-      throw new Error(`Invalid plan: ${plan}`);
-    }
-
-    console.log('Creating Stripe payment intent with:', {
-      amount,
-      currency: 'usd',
-      metadata: { resumeId, plan }
+    const paymentMethods = await stripe.paymentMethods.list({
+      limit: 1,
+      type: 'card'
     });
-
-    // Create a PaymentIntent with the order amount and currency
-    const paymentIntent = await stripe.paymentIntents.create({
-      amount,
-      currency: 'usd',
-      metadata: {
-        resumeId: resumeId.toString(),
-        plan
-      },
-      automatic_payment_methods: {
-        enabled: true,
-        allow_redirects: 'always'
-      },
-      return_url: process.env.NODE_ENV === 'production' 
-        ? 'https://resumer-frontend.onrender.com/dashboard'
-        : 'http://localhost:3000/dashboard',
-      cancel_url: process.env.NODE_ENV === 'production'
-        ? 'https://resumer-frontend.onrender.com/upload'
-        : 'http://localhost:3000/upload'
-    }).catch(error => {
-      console.error('Stripe API error:', {
-        type: error.type,
-        code: error.code,
-        message: error.message,
-        raw: error.raw
-      });
-      throw error;
-    });
-
-    console.log('Payment intent created successfully:', {
-      id: paymentIntent.id,
-      clientSecret: paymentIntent.client_secret ? 'Present' : 'Missing',
-      status: paymentIntent.status,
-      amount: paymentIntent.amount,
-      currency: paymentIntent.currency
-    });
-
-    // Update resume with payment intent id
-    await prisma.resume.update({
-      where: { id: parseInt(resumeId) },
-      data: {
-        stripePaymentIntentId: paymentIntent.id
-      }
-    });
-
-    res.json({
-      clientSecret: paymentIntent.client_secret
+    
+    res.json({ 
+      status: 'success',
+      message: 'Stripe connection successful',
+      keyPrefix: process.env.STRIPE_SECRET_KEY?.substring(0, 7)
     });
   } catch (error) {
-    console.error('Payment intent creation error details:', {
-      error: error.message,
-      stack: error.stack,
-      code: error.code,
-      type: error.type,
-      raw: error.raw,
-      stripeError: error.raw,
-      stripeKeyPresent: !!process.env.STRIPE_SECRET_KEY,
-      stripeKeyPrefix: process.env.STRIPE_SECRET_KEY ? process.env.STRIPE_SECRET_KEY.substring(0, 8) : 'Not set'
-    });
-
-    // Send a more detailed error response in development
+    console.error('Stripe test error:', error);
     res.status(500).json({ 
-      error: 'Error creating payment intent',
-      details: process.env.NODE_ENV === 'development' ? {
-        message: error.message,
-        type: error.type,
-        code: error.code
-      } : undefined
+      error: 'Stripe configuration error',
+      message: error.message
     });
   }
 });
 
-// Handle Stripe webhook
-router.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+// Create a checkout session
+router.post('/create-checkout-session', async (req, res) => {
+  try {
+    console.log('Received checkout request:', req.body);
+    const { plan, resumeId } = req.body;
+    
+    if (!plan || !resumeId) {
+      console.log('Missing required fields:', { plan, resumeId });
+      return res.status(400).json({ error: 'Missing required fields: plan and resumeId' });
+    }
+
+    // Get the resume details
+    const resume = await prisma.resume.findUnique({
+      where: { id: parseInt(resumeId) },
+      include: { user: true }
+    });
+
+    if (!resume) {
+      console.log('Resume not found:', resumeId);
+      return res.status(404).json({ error: 'Resume not found' });
+    }
+
+    // Set price based on plan
+    const prices = {
+      basic: 500,        // $5.00
+      premium: 1000,     // $10.00
+      urgent: 2500,      // $25.00
+      jobApplication: 15000  // $150.00
+    };
+
+    const planTitles = {
+      basic: 'Basic Resume Edit',
+      premium: 'Premium Resume Edit',
+      urgent: 'Urgent Resume Edit',
+      jobApplication: 'Job Application Service'
+    };
+
+    if (!prices[plan]) {
+      console.log('Invalid plan selected:', plan);
+      return res.status(400).json({ error: 'Invalid plan selected' });
+    }
+
+    console.log('Creating checkout session for plan:', plan, 'price:', prices[plan]);
+
+    // Create Stripe checkout session
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ['card'],
+      line_items: [
+        {
+          price_data: {
+            currency: 'usd',
+            product_data: {
+              name: planTitles[plan],
+              description: `Resume optimization service - ${plan} plan`,
+            },
+            unit_amount: prices[plan],
+          },
+          quantity: 1,
+        },
+      ],
+      mode: 'payment',
+      success_url: `${process.env.CLIENT_URL}/dashboard?success=true&session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${process.env.CLIENT_URL}/upload?canceled=true`,
+      metadata: {
+        resumeId: resumeId.toString(),
+        userId: resume.userId.toString(),
+        plan: plan
+      }
+    });
+
+    console.log('Stripe session created:', session.id);
+    res.json({ url: session.url });
+  } catch (error) {
+    console.error('Checkout session error:', error);
+    res.status(500).json({ 
+      error: 'Error creating checkout session',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
+
+// Stripe webhook handler
+router.post('/webhook', express.raw({type: 'application/json'}), async (req, res) => {
   const sig = req.headers['stripe-signature'];
   let event;
 
   try {
+    // Only log minimal information in production
+    console.log('Webhook request received:', new Date().toISOString());
+    
     event = stripe.webhooks.constructEvent(
       req.body,
       sig,
       process.env.STRIPE_WEBHOOK_SECRET
     );
-  } catch (err) {
-    console.error('Webhook signature verification failed:', err.message);
-    return res.status(400).send(`Webhook Error: ${err.message}`);
-  }
 
-  // Handle the event
-  try {
+    // Log event type but not full event data in production
+    console.log('Processing webhook event type:', event.type);
+
     switch (event.type) {
-      case 'payment_intent.succeeded':
-        const paymentIntent = event.data.object;
-        const resumeId = parseInt(paymentIntent.metadata.resumeId);
+      case 'checkout.session.completed':
+        const session = event.data.object;
+        const amount = session.amount_total / 100;
+        const resumeId = parseInt(session.metadata.resumeId);
         
-        // Update resume payment status
-        await prisma.resume.update({
+        console.log('Processing successful payment for resume:', resumeId);
+
+        const updatedResume = await prisma.resume.update({
           where: { id: resumeId },
           data: {
-            paymentStatus: 'completed',
-            status: 'pending' // Change status to pending after payment
+            status: 'processing',
+            paymentStatus: 'success',
+            paymentAmount: amount,
+            price: amount,
+            stripePaymentIntentId: session.payment_intent
           }
         });
+
+        console.log('Payment processed successfully for resume:', resumeId);
+        break;
+      
+      case 'checkout.session.expired':
+        const expiredSession = event.data.object;
+        if (expiredSession.metadata?.resumeId) {
+          await prisma.resume.update({
+            where: { id: parseInt(expiredSession.metadata.resumeId) },
+            data: {
+              paymentStatus: 'expired',
+              status: 'cancelled'
+            }
+          });
+        }
         break;
 
       case 'payment_intent.payment_failed':
-        const failedPayment = event.data.object;
-        await prisma.resume.update({
-          where: { id: parseInt(failedPayment.metadata.resumeId) },
-          data: {
-            paymentStatus: 'failed'
-          }
-        });
+        const paymentIntent = event.data.object;
+        if (paymentIntent.metadata?.resumeId) {
+          await prisma.resume.update({
+            where: { id: parseInt(paymentIntent.metadata.resumeId) },
+            data: {
+              paymentStatus: 'failed',
+              status: 'cancelled'
+            }
+          });
+        }
         break;
     }
 
-    res.json({ received: true });
+    res.json({received: true});
+  } catch (err) {
+    console.error('Webhook error:', err.message);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+});
+
+// Check payment status
+router.get('/check-payment/:sessionId', async (req, res) => {
+  // Add CORS headers
+  res.header('Access-Control-Allow-Origin', process.env.CLIENT_URL);
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  
+  try {
+    const { sessionId } = req.params;
+    console.log('Checking payment status for session:', sessionId);
+
+    const session = await stripe.checkout.sessions.retrieve(sessionId);
+    console.log('Retrieved session details:', {
+      id: session.id,
+      status: session.payment_status,
+      amount: session.amount_total,
+      metadata: session.metadata,
+      customer: session.customer
+    });
+
+    if (session.payment_status === 'paid') {
+      // Update the resume if payment is successful
+      const resumeId = parseInt(session.metadata.resumeId);
+      const amount = session.amount_total / 100;
+
+      console.log('Updating resume payment details:', {
+        resumeId,
+        amount,
+        paymentStatus: 'success'
+      });
+
+      const updatedResume = await prisma.resume.update({
+        where: { id: resumeId },
+        data: {
+          status: 'processing',
+          paymentStatus: 'success',
+          paymentAmount: amount,
+          price: amount,
+          stripePaymentIntentId: session.payment_intent
+        }
+      });
+
+      console.log('Successfully updated resume:', {
+        id: updatedResume.id,
+        status: updatedResume.status,
+        paymentStatus: updatedResume.paymentStatus,
+        paymentAmount: updatedResume.paymentAmount
+      });
+
+      // Send a more detailed response
+      return res.json({
+        status: session.payment_status,
+        amount: session.amount_total / 100,
+        metadata: session.metadata,
+        resumeStatus: updatedResume.status,
+        paymentStatus: updatedResume.paymentStatus
+      });
+    }
+
+    res.json({
+      status: session.payment_status,
+      amount: session.amount_total / 100,
+      metadata: session.metadata
+    });
   } catch (error) {
-    console.error('Webhook processing error:', error);
-    res.status(500).json({ error: 'Webhook processing failed' });
+    console.error('Error checking payment status:', error);
+    res.status(500).json({ error: 'Error checking payment status', details: error.message });
   }
 });
 

@@ -22,9 +22,5 @@ services:
         value: smtp.gmail.com
       - key: EMAIL_PORT
         value: "587"
-      - key: STRIPE_SECRET_KEY
-        sync: false # Will be set manually in Render dashboard
-      - key: STRIPE_WEBHOOK_SECRET
-        sync: false # Will be set manually in Render dashboard
     healthCheckPath: /healthx
     autoDeploy: true 

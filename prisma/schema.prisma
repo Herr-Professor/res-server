@@ -13,29 +13,29 @@ datasource db {
 model User {
   id        Int      @id @default(autoincrement())
   email     String   @unique
-  password  String
   name      String
+  password  String
   role      String   @default("user")
   createdAt DateTime @default(now())
   resumes   Resume[]
 }
 
 model Resume {
-  id                   Int       @id @default(autoincrement())
-  userId               Int
-  user                 User      @relation(fields: [userId], references: [id])
-  fileName             String
-  originalFileName     String
-  status              String    @default("pending")
-  plan                String
-  jobInterest         String?
-  description         String?
-  feedback            String?
-  optimizedResume     String?
-  paymentStatus       String    @default("pending")
-  price               Float
-  submittedAt         DateTime  @default(now())
-  completedAt         DateTime?
+  id                    Int       @id @default(autoincrement())
+  userId                Int
+  fileName              String
+  originalFileName      String
+  optimizedResume       String?
+  status               String    @default("pending")
+  submittedAt          DateTime  @default(now())
+  completedAt          DateTime?
+  feedback             String?
+  plan                 String
+  jobInterest          String?
+  description          String?
+  price                Float?
   stripePaymentIntentId String?
-  stripeCustomerId    String?
+  paymentStatus        String    @default("pending")
+  paymentAmount        Float?
+  user                 User      @relation(fields: [userId], references: [id])
 } 
