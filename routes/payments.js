@@ -4,6 +4,11 @@ const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const router = express.Router();
 const prisma = new PrismaClient();
 
+// Discount codes configuration
+const DISCOUNT_CODES = {
+  'tonfans25': 0.5  // 50% off
+};
+
 // Test endpoint to verify Stripe configuration
 router.get('/test-stripe', async (req, res) => {
   try {
@@ -34,7 +39,7 @@ router.get('/test-stripe', async (req, res) => {
 router.post('/create-checkout-session', async (req, res) => {
   try {
     console.log('Received checkout request:', req.body);
-    const { plan, resumeId } = req.body;
+    const { plan, resumeId, discountCode } = req.body;
     
     if (!plan || !resumeId) {
       console.log('Missing required fields:', { plan, resumeId });
@@ -72,7 +77,17 @@ router.post('/create-checkout-session', async (req, res) => {
       return res.status(400).json({ error: 'Invalid plan selected' });
     }
 
-    console.log('Creating checkout session for plan:', plan, 'price:', prices[plan]);
+    // Apply discount if valid code provided
+    let finalPrice = prices[plan];
+    let appliedDiscount = null;
+    
+    if (discountCode && DISCOUNT_CODES[discountCode]) {
+      const discountMultiplier = DISCOUNT_CODES[discountCode];
+      finalPrice = Math.round(finalPrice * (1 - discountMultiplier)); // Round to avoid floating point issues
+      appliedDiscount = discountCode;
+    }
+
+    console.log('Creating checkout session for plan:', plan, 'price:', finalPrice, 'discount:', appliedDiscount);
 
     // Create Stripe checkout session
     const session = await stripe.checkout.sessions.create({
@@ -83,9 +98,9 @@ router.post('/create-checkout-session', async (req, res) => {
             currency: 'usd',
             product_data: {
               name: planTitles[plan],
-              description: `Resume optimization service - ${plan} plan`,
+              description: `Resume optimization service - ${plan} plan${appliedDiscount ? ` (Discount: ${appliedDiscount})` : ''}`,
             },
-            unit_amount: prices[plan],
+            unit_amount: finalPrice,
           },
           quantity: 1,
         },
@@ -96,7 +111,8 @@ router.post('/create-checkout-session', async (req, res) => {
       metadata: {
         resumeId: resumeId.toString(),
         userId: resume.userId.toString(),
-        plan: plan
+        plan: plan,
+        appliedDiscount: appliedDiscount || ''
       }
     });
 
