@@ -33,7 +33,10 @@ app.use((req, res, next) => {
 // Middleware
 const allowedOrigins = [
   'https://resumeoptimizer.io',
-  'https://www.resumeoptimizer.io'
+  'https://www.resumeoptimizer.io',
+  'https://res-server-12bn.onrender.com',
+  'http://localhost:5173',  // For local development
+  'http://localhost:3000'   // For local development
 ];
 
 app.use(cors({
@@ -42,6 +45,7 @@ app.use(cors({
     if (!origin) return callback(null, true);
     
     if (allowedOrigins.indexOf(origin) === -1) {
+      console.log('Blocked origin:', origin);
       const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
       return callback(new Error(msg), false);
     }
@@ -69,6 +73,7 @@ app.get('/healthx', (req, res) => {
 
 // Routes
 app.use('/api/auth', authRoutes);
+app.use('/api/resumes/free-ats-check', resumeRoutes); // Free ATS check route without auth
 app.use('/api/resumes', authenticateToken, resumeRoutes);
 app.use('/api/admin', authenticateToken, isAdmin, adminRoutes);
 app.use('/api/payment', paymentRoutes); // Mount payment routes at /api/payment
