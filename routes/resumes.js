@@ -5,6 +5,7 @@ const { PrismaClient } = require('@prisma/client');
 const fs = require('fs');
 
 const router = express.Router();
+const freeATSRouter = express.Router(); // New router for free ATS check
 const prisma = new PrismaClient();
 
 // Define uploads directory based on environment
@@ -71,7 +72,7 @@ router.post('/', upload.single('resume'), async (req, res) => {
 });
 
 // Free ATS check route
-router.post('/free-ats-check', upload.single('resume'), async (req, res) => {
+freeATSRouter.post('/', upload.single('resume'), async (req, res) => {
   try {
     const { email } = req.body;
 
@@ -94,12 +95,6 @@ router.post('/free-ats-check', upload.single('resume'), async (req, res) => {
         plan: 'free'
       }
     });
-
-    // Here you would trigger your ATS analysis process
-    // This could be a separate service or worker that:
-    // 1. Analyzes the resume
-    // 2. Generates the report
-    // 3. Sends the email with results
 
     res.json({
       message: 'Resume received for ATS check',
@@ -254,4 +249,4 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-module.exports = router; 
+module.exports = { router, freeATSRouter }; 

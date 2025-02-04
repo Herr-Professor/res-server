@@ -6,7 +6,7 @@ const fs = require('fs');
 const { PrismaClient } = require('@prisma/client');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const authRoutes = require('./routes/auth');
-const resumeRoutes = require('./routes/resumes');
+const { router: resumeRoutes, freeATSRouter } = require('./routes/resumes');
 const adminRoutes = require('./routes/admin');
 const paymentRoutes = require('./routes/payments');
 const { authenticateToken, isAdmin } = require('./middleware/auth');
@@ -73,7 +73,7 @@ app.get('/healthx', (req, res) => {
 
 // Routes
 app.use('/api/auth', authRoutes);
-app.use('/api/resumes/free-ats-check', resumeRoutes); // Free ATS check route without auth
+app.use('/api/resumes/free-ats-check', freeATSRouter); // Free ATS check route without auth
 app.use('/api/resumes', authenticateToken, resumeRoutes);
 app.use('/api/admin', authenticateToken, isAdmin, adminRoutes);
 app.use('/api/payment', paymentRoutes); // Mount payment routes at /api/payment
