@@ -21,21 +21,23 @@ model User {
 }
 
 model Resume {
-  id                    Int       @id @default(autoincrement())
-  userId                Int
-  fileName              String
-  originalFileName      String
-  optimizedResume       String?
-  status               String    @default("pending")
-  submittedAt          DateTime  @default(now())
-  completedAt          DateTime?
-  feedback             String?
-  plan                 String
-  jobInterest          String?
-  description          String?
-  price                Float?
+  id              Int       @id @default(autoincrement())
+  fileName        String
+  originalFileName String
+  optimizedResume String?
+  status          String    @default("pending") // pending, in-progress, completed
+  feedback        String?
+  submittedAt     DateTime  @default(now())
+  completedAt     DateTime?
+  plan            String    // basic, premium, urgent, free
+  type            String    @default("paid") // paid, free_ats_check
+  jobInterest     String?
+  description     String?
+  price           Float?
+  paymentStatus   String?   // pending, success
+  paymentAmount   Float?
   stripePaymentIntentId String?
-  paymentStatus        String    @default("pending")
-  paymentAmount        Float?
-  user                 User      @relation(fields: [userId], references: [id])
+  email           String?   // For free ATS checks without user account
+  userId          Int?      // Optional for free ATS checks
+  user            User?     @relation(fields: [userId], references: [id])
 } 

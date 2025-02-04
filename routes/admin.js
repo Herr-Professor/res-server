@@ -48,11 +48,16 @@ router.get('/submissions', async (req, res) => {
     const page = parseInt(req.query.page) || 1;
     const limit = 10;
     const skip = (page - 1) * limit;
+    const type = req.query.type || 'all'; // 'all', 'paid', or 'free_ats_check'
+
+    // Build where clause based on type filter
+    const whereClause = type !== 'all' ? { type } : {};
 
     const [submissions, total] = await Promise.all([
       prisma.resume.findMany({
         skip,
         take: limit,
+        where: whereClause,
         select: {
           id: true,
           originalFileName: true,
@@ -68,6 +73,8 @@ router.get('/submissions', async (req, res) => {
           paymentAmount: true,
           jobInterest: true,
           description: true,
+          type: true,
+          email: true,
           user: {
             select: {
               id: true,
@@ -80,8 +87,15 @@ router.get('/submissions', async (req, res) => {
           submittedAt: 'desc'
         }
       }),
-      prisma.resume.count()
+      prisma.resume.count({ where: whereClause })
     ]);
+
+    // Get submission stats
+    const stats = {
+      total,
+      paid: await prisma.resume.count({ where: { type: 'paid' } }),
+      freeATS: await prisma.resume.count({ where: { type: 'free_ats_check' } })
+    };
 
     // Log the first submission for debugging
     if (submissions.length > 0) {
@@ -94,6 +108,7 @@ router.get('/submissions', async (req, res) => {
 
     res.json({
       submissions,
+      stats,
       total,
       pages: Math.ceil(total / limit),
       currentPage: page

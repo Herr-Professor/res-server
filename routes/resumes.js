@@ -70,6 +70,47 @@ router.post('/', upload.single('resume'), async (req, res) => {
   }
 });
 
+// Free ATS check route
+router.post('/free-ats-check', upload.single('resume'), async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    if (!email) {
+      return res.status(400).json({ error: 'Email is required' });
+    }
+
+    // Create a new resume entry for the free ATS check
+    const resume = await prisma.resume.create({
+      data: {
+        fileName: req.file.filename,
+        originalFileName: req.file.originalname,
+        email: email,
+        type: 'free_ats_check',
+        status: 'pending',
+        plan: 'free'
+      }
+    });
+
+    // Here you would trigger your ATS analysis process
+    // This could be a separate service or worker that:
+    // 1. Analyzes the resume
+    // 2. Generates the report
+    // 3. Sends the email with results
+
+    res.json({
+      message: 'Resume received for ATS check',
+      id: resume.id
+    });
+  } catch (error) {
+    console.error('Free ATS check error:', error);
+    res.status(500).json({ error: 'Error processing free ATS check' });
+  }
+});
+
 // Get user submissions route
 router.get('/user/:userId', async (req, res) => {
   try {
