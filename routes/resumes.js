@@ -25,23 +25,58 @@ const storage = multer.diskStorage({
   },
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, uniqueSuffix + path.extname(file.originalname));
+    const ext = path.extname(file.originalname).toLowerCase();
+    cb(null, uniqueSuffix + ext);
   }
 });
 
+const fileFilter = (req, file, cb) => {
+  // Accept PDF, DOC, and DOCX files
+  const allowedMimeTypes = [
+    'application/pdf',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+  ];
+  
+  if (allowedMimeTypes.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new Error('Invalid file type. Only PDF, DOC, and DOCX files are allowed.'), false);
+  }
+};
+
 const upload = multer({ 
   storage: storage,
-  fileFilter: (req, file, cb) => {
-    if (file.mimetype === 'application/pdf') {
-      cb(null, true);
-    } else {
-      cb(new Error('Only PDF files are allowed!'), false);
-    }
-  },
+  fileFilter: fileFilter,
   limits: {
     fileSize: 5 * 1024 * 1024 // 5MB limit
   }
 });
+
+// Error handling middleware for multer
+const handleMulterError = (err, req, res, next) => {
+  if (err instanceof multer.MulterError) {
+    console.error('Multer error:', err);
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(400).json({
+        error: 'File too large',
+        details: 'Maximum file size is 5MB'
+      });
+    }
+    return res.status(400).json({
+      error: 'File upload error',
+      details: err.message
+    });
+  }
+  if (err) {
+    console.error('File upload error:', err);
+    return res.status(400).json({
+      error: 'Invalid file',
+      details: err.message
+    });
+  }
+  next();
+};
 
 // Upload resume route
 router.post('/', upload.single('resume'), async (req, res) => {
@@ -71,16 +106,28 @@ router.post('/', upload.single('resume'), async (req, res) => {
   }
 });
 
-// Free ATS check route
-freeATSRouter.post('/', upload.single('resume'), async (req, res) => {
+// Free ATS check route with error handling
+freeATSRouter.post('/', upload.single('resume'), handleMulterError, async (req, res) => {
   try {
+    console.log('Received free ATS check request:', {
+      file: req.file ? {
+        filename: req.file.filename,
+        originalname: req.file.originalname,
+        mimetype: req.file.mimetype,
+        size: req.file.size
+      } : 'No file',
+      email: req.body.email
+    });
+
     const { email } = req.body;
 
     if (!req.file) {
+      console.error('No file uploaded in request');
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
     if (!email) {
+      console.error('No email provided in request');
       return res.status(400).json({ error: 'Email is required' });
     }
 
@@ -92,8 +139,15 @@ freeATSRouter.post('/', upload.single('resume'), async (req, res) => {
         email: email,
         type: 'free_ats_check',
         status: 'pending',
-        plan: 'free'
+        plan: 'free',
+        submittedAt: new Date()
       }
+    });
+
+    console.log('Successfully created resume entry:', {
+      id: resume.id,
+      fileName: resume.fileName,
+      email: resume.email
     });
 
     res.json({
@@ -102,7 +156,14 @@ freeATSRouter.post('/', upload.single('resume'), async (req, res) => {
     });
   } catch (error) {
     console.error('Free ATS check error:', error);
-    res.status(500).json({ error: 'Error processing free ATS check' });
+    console.error('Error stack:', error.stack);
+    if (error.code === 'P2002') {
+      return res.status(400).json({ error: 'A resume with this email already exists' });
+    }
+    res.status(500).json({ 
+      error: 'Error processing free ATS check',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 });
 
