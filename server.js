@@ -34,7 +34,7 @@ app.use((req, res, next) => {
 const allowedOrigins = [
   'https://resumeoptimizer.io',
   'https://www.resumeoptimizer.io',
-  'https://res-server-12bn.onrender.com',
+  'https://res-server-fito.onrender.com',
   'http://localhost:5173',  // For local development
   'http://localhost:3000'   // For local development
 ];
