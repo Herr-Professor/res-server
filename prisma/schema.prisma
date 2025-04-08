@@ -11,33 +11,65 @@ datasource db {
 }
 
 model User {
-  id        Int      @id @default(autoincrement())
-  email     String   @unique
-  name      String
-  password  String
-  role      String   @default("user")
-  createdAt DateTime @default(now())
-  resumes   Resume[]
+  id                   Int      @id @default(autoincrement())
+  email                String   @unique
+  name                 String
+  password             String
+  role                 String   @default("user")
+  createdAt            DateTime @default(now())
+  subscriptionStatus   String   @default("free") // free, premium, inactive
+  stripeSubscriptionId String?
+  ppuAtsCredits        Int      @default(0)
+  ppuOptimizationCredits Int    @default(0)
+
+  resumes     Resume[]
+  reviewOrders ReviewOrder[] // Added relation
 }
 
 model Resume {
-  id              Int       @id @default(autoincrement())
-  fileName        String
-  originalFileName String
-  optimizedResume String?
-  status          String    @default("pending") // pending, in-progress, completed
-  feedback        String?
-  submittedAt     DateTime  @default(now())
-  completedAt     DateTime?
-  plan            String    // basic, premium, urgent, free
-  type            String    @default("paid") // paid, free_ats_check
-  jobInterest     String?
-  description     String?
-  price           Float?
-  paymentStatus   String?   // pending, success
-  paymentAmount   Float?
+  id                             Int       @id @default(autoincrement())
+  fileName                       String
+  originalFileName               String
+  optimizedResume                String?
+  // Refined status values
+  status                         String    @default("uploaded") // e.g., uploaded, basic_ats_pending, basic_ats_complete, detailed_ats_pending, detailed_ats_complete, job_opt_pending, job_opt_complete, pending_review, review_complete
+  feedback                       Json?     // Changed type to Json
+  submittedAt                    DateTime  @default(now())
+  completedAt                    DateTime?
+  // Removed 'plan' field
+  type                           String    @default("paid") // paid, free_ats_check
+  jobInterest                    String?
+  description                    String?   @db.Text // Added @db.Text for potentially long descriptions
+  price                          Float?    // Kept for potential review purchase tracking
+  paymentStatus                  String?   // Kept for potential review purchase tracking
+  paymentAmount                  Float?    // Kept for potential review purchase tracking
+  stripePaymentIntentId          String?   // Kept for potential review purchase tracking
+  email                          String?   // For free ATS checks without user account (kept for now)
+  jobDescription                 String?   @db.Text // Added field
+  atsScore                       Float?    // Added field
+  optimizationScore              Float?    // Added field
+  keywordAnalysis                Json?     // Added field
+  ppuOptimizationClicksRemaining Int?      // Added field
+  editedText                     String?   @db.Text // Added field for editor content
+
+  userId      Int?      // Optional for free ATS checks
+  user        User?     @relation(fields: [userId], references: [id])
+  reviewOrder ReviewOrder? // Added relation (Assuming one review per resume for now, can change to [] if needed)
+}
+
+// Added model for Professional Reviews
+model ReviewOrder {
+  id                    Int      @id @default(autoincrement())
+  status                String   @default("requested") // e.g., requested, assigned, in_progress, completed, cancelled
+  submittedDate         DateTime @default(now())
+  completedDate         DateTime?
+  paymentStatus         String? // pending, success, failed
   stripePaymentIntentId String?
-  email           String?   // For free ATS checks without user account
-  userId          Int?      // Optional for free ATS checks
-  user            User?     @relation(fields: [userId], references: [id])
+  reviewerFeedback      String?  @db.Text // Added field for admin feedback
+
+  userId Int
+  user   User @relation(fields: [userId], references: [id])
+
+  resumeId Int      @unique // Assuming one review order per resume
+  resume   Resume   @relation(fields: [resumeId], references: [id])
 } 

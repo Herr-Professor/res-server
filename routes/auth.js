@@ -2,6 +2,7 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { PrismaClient } = require('@prisma/client');
+const { authenticateToken } = require('../middleware/auth'); // Import middleware
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -123,6 +124,34 @@ router.post('/login', async (req, res) => {
     res.status(500).json({
       error: 'Error logging in',
       details: error.message || 'An unexpected error occurred during login'
+    });
+  }
+});
+
+// NEW: Get User Profile route
+router.get('/profile', authenticateToken, async (req, res) => {
+  try {
+    // The authenticateToken middleware already fetched the user and attached it to req.user
+    const user = req.user;
+
+    // Return relevant user data (excluding password)
+    res.json({
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      role: user.role,
+      subscriptionStatus: user.subscriptionStatus,
+      ppuAtsCredits: user.ppuAtsCredits,
+      ppuOptimizationCredits: user.ppuOptimizationCredits,
+      createdAt: user.createdAt
+      // Add any other fields needed by the frontend context
+    });
+
+  } catch (error) {
+    console.error('Get profile error:', error);
+    res.status(500).json({
+      error: 'Error fetching profile',
+      details: error.message || 'An unexpected error occurred'
     });
   }
 });

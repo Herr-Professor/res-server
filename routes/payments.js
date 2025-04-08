@@ -4,38 +4,33 @@ const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const router = express.Router();
 const prisma = new PrismaClient();
 
-// Service configuration with placeholder Stripe price IDs and pricing details
+// Updated service configuration aligned with schema and Resopt.txt
 const serviceConfig = {
   subscription: {
-    priceId: 'price_xxx', // Replace with actual Stripe price ID for $15/month
-    description: 'Monthly Subscription (Unlimited Access)',
+    priceId: process.env.STRIPE_PRICE_ID_SUBSCRIPTION || 'price_sub_placeholder', // Use env var or placeholder
+    description: 'Premium Subscription ($15/month)',
     recurring: true,
-    amount: 1500 // $15.00 in cents (for reference, not used directly in subscription)
+    amount: 1500 // $15.00 in cents (for reference)
   },
-  professionalReview: {
-    priceId: 'price_yyy', // Replace with actual Stripe price ID for $25
-    description: 'Professional Resume Review',
+  review: { // Changed from professionalReview
+    priceId: process.env.STRIPE_PRICE_ID_REVIEW || 'price_review_placeholder', // Use env var or placeholder
+    description: 'Professional Resume Review ($30)',
     recurring: false,
-    amount: 2500 // $25.00 in cents
+    amount: 3000 // $30.00 in cents
   },
-  atsReport: {
-    priceId: 'price_zzz', // Replace with actual Stripe price ID for $5
-    description: 'Detailed ATS Report',
-    recurring: false,
-    amount: 500 // $5.00 in cents
-  },
-  keywordOpt: {
-    priceId: 'price_aaa', // Replace with actual Stripe price ID for $5
-    description: 'Keyword Optimization',
+  ppu_ats: { // Changed from atsReport
+    priceId: process.env.STRIPE_PRICE_ID_PPU_ATS || 'price_ppu_ats_placeholder', // Use env var or placeholder
+    description: 'Pay-Per-Use: Detailed ATS Report ($5)',
     recurring: false,
     amount: 500 // $5.00 in cents
   },
-  tailoredSuggestions: {
-    priceId: 'price_bbb', // Replace with actual Stripe price ID for $5
-    description: 'Tailored Suggestions',
+  ppu_optimization: { // Changed from keywordOpt/tailoredSuggestions
+    priceId: process.env.STRIPE_PRICE_ID_PPU_OPT || 'price_ppu_opt_placeholder', // Use env var or placeholder
+    description: 'Pay-Per-Use: Job-Specific Optimization ($5)',
     recurring: false,
     amount: 500 // $5.00 in cents
   }
+  // Removed keywordOpt and tailoredSuggestions as they are covered by ppu_optimization
 };
 
 // Discount codes configuration
@@ -77,12 +72,17 @@ router.get('/test-stripe', async (req, res) => {
 router.post('/create-checkout-session', async (req, res) => {
   try {
     console.log('Received checkout request:', req.body);
-    const { serviceType, userId, resumeId, discountCode } = req.body;
+    const { serviceType, userId, resumeId, discountCode } = req.body; // resumeId is needed for 'review'
 
     // Validate required fields
     if (!serviceType || !userId) {
       console.log('Missing required fields:', { serviceType, userId });
       return res.status(400).json({ error: 'Missing required fields: serviceType and userId' });
+    }
+    // Validate resumeId specifically for review service
+    if (serviceType === 'review' && !resumeId) {
+        console.log('Missing resumeId for review service:', { serviceType, userId, resumeId });
+        return res.status(400).json({ error: 'Missing required field: resumeId is required for review service' });
     }
 
     // Validate serviceType
@@ -131,15 +131,34 @@ router.post('/create-checkout-session', async (req, res) => {
         quantity: 1
       }],
       mode: service.recurring ? 'subscription' : 'payment',
-      success_url: `${process.env.CLIENT_URL}/dashboard?success=true&session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${process.env.CLIENT_URL}/dashboard?canceled=true`,
+      success_url: `${process.env.CLIENT_URL || 'http://localhost:5173'}/dashboard?success=true&session_id={CHECKOUT_SESSION_ID}`, // Added default client URL
+      cancel_url: `${process.env.CLIENT_URL || 'http://localhost:5173'}/dashboard?canceled=true`, // Added default client URL
+      customer_email: user.email, // Pre-fill email
       metadata: {
         serviceType,
         userId: userId.toString(),
-        resumeId: resumeId?.toString() || '',
+        // Only include resumeId if it's relevant (e.g., for reviews)
+        resumeId: serviceType === 'review' ? resumeId.toString() : '',
         appliedDiscount: appliedDiscount || ''
       }
     };
+
+    // Add subscription-specific configuration if needed
+    if (service.recurring) {
+      sessionConfig.subscription_data = {
+        // Add trial period, etc., if needed in the future
+        // trial_period_days: 30
+      };
+      // If user already has a Stripe customer ID, use it
+      // This helps manage subscriptions under one customer in Stripe
+      // You might need to store stripeCustomerId on your User model
+      // const existingStripeCustomerId = user.stripeCustomerId;
+      // if (existingStripeCustomerId) {
+      //   sessionConfig.customer = existingStripeCustomerId;
+      // } else {
+      //   sessionConfig.customer_email = user.email;
+      // }
+    }
 
     const session = await stripe.checkout.sessions.create(sessionConfig);
     console.log('Stripe session created:', session.id);
@@ -174,41 +193,96 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
     switch (event.type) {
       case 'checkout.session.completed':
         const session = event.data.object;
-        const { serviceType, userId, resumeId } = session.metadata;
-        const amount = session.amount_total / 100;
+        // Ensure metadata exists before destructuring
+        const metadata = session.metadata;
+        if (!metadata) {
+          console.error('Webhook Error: Checkout session completed event missing metadata!', { sessionId: session.id });
+          return res.status(400).json({ error: 'Webhook error: Missing metadata' });
+        }
+        const { serviceType, userId, resumeId } = metadata;
+        const parsedUserId = parseInt(userId);
+        const parsedResumeId = resumeId ? parseInt(resumeId) : null;
 
+        console.log('Webhook checkout.session.completed processing:', { serviceType, userId: parsedUserId, resumeId: parsedResumeId, sessionId: session.id });
+
+        if (!parsedUserId) {
+             console.error('Webhook Error: Invalid or missing userId in metadata!', { metadata });
+             return res.status(400).json({ error: 'Webhook error: Invalid userId' });
+        }
+
+        // Handle based on serviceType from metadata
         if (serviceType === 'subscription') {
           await prisma.user.update({
-            where: { id: parseInt(userId) },
+            where: { id: parsedUserId },
             data: {
-              subscriptionId: session.subscription,
-              subscriptionStatus: 'active'
+              stripeSubscriptionId: session.subscription, // Correct field from session for subscriptions
+              subscriptionStatus: 'premium' // Updated status
             }
           });
-          console.log('Subscription activated for user:', userId);
-        } else if (resumeId) {
-          await prisma.resume.update({
-            where: { id: parseInt(resumeId) },
-            data: {
-              status: 'processing',
-              paymentStatus: 'success',
-              paymentAmount: amount,
-              price: amount,
-              stripePaymentIntentId: session.payment_intent
+          console.log(`Subscription activated for user: ${parsedUserId}`);
+
+        } else if (serviceType === 'ppu_ats') {
+           await prisma.user.update({
+             where: { id: parsedUserId },
+             data: {
+               ppuAtsCredits: { increment: 1 } // Increment credits
+             }
+           });
+           console.log(`PPU ATS credit added for user: ${parsedUserId}`);
+
+        } else if (serviceType === 'ppu_optimization') {
+          await prisma.user.update({
+             where: { id: parsedUserId },
+             data: {
+               ppuOptimizationCredits: { increment: 1 } // Increment credits
+             }
+           });
+          console.log(`PPU Optimization credit added for user: ${parsedUserId}`);
+
+        } else if (serviceType === 'review') {
+            if (!parsedResumeId) {
+                console.error('Webhook Error: resumeId missing in metadata for review service!', { metadata });
+                // Optionally handle this case - maybe log or notify admin
+                return res.status(400).json({ error: 'Webhook error: Missing resumeId for review' });
             }
-          });
-          console.log('Payment processed for resume:', resumeId);
+            // Create ReviewOrder and update Resume status within a transaction
+            try {
+               await prisma.$transaction(async (tx) => {
+                 // 1. Create the ReviewOrder
+                 await tx.reviewOrder.create({
+                   data: {
+                     userId: parsedUserId,
+                     resumeId: parsedResumeId,
+                     status: 'requested', // Initial status
+                     paymentStatus: 'success',
+                     stripePaymentIntentId: session.payment_intent // Use payment_intent for one-time payments
+                   }
+                 });
+                 console.log(`ReviewOrder created for user: ${parsedUserId}, resume: ${parsedResumeId}`);
+
+                 // 2. Update the associated Resume status
+                 await tx.resume.update({
+                   where: { id: parsedResumeId },
+                   data: {
+                     status: 'pending_review', // Set resume status
+                     // Optionally store payment details also on resume if needed, though ReviewOrder is primary
+                     // paymentStatus: 'success',
+                     // stripePaymentIntentId: session.payment_intent
+                   }
+                 });
+                 console.log(`Resume status updated to pending_review for resume: ${parsedResumeId}`);
+               });
+            } catch (transactionError) {
+               console.error(`Webhook Transaction Error for review service: ${transactionError}`, { userId: parsedUserId, resumeId: parsedResumeId });
+               // Decide how to handle transaction failure - potentially refund? Log for manual review.
+               return res.status(500).json({ error: 'Webhook error: Failed to process review order transaction' });
+            }
+
         } else {
-          await prisma.servicePurchase.create({
-            data: {
-              userId: parseInt(userId),
-              serviceType,
-              paymentStatus: 'success',
-              amount
-            }
-          });
-          console.log('Service purchase recorded:', { userId, serviceType });
+           // Handle unknown serviceType or log an error
+           console.warn(`Webhook Warning: Unhandled serviceType '${serviceType}' in checkout.session.completed`, { metadata });
         }
+
         break;
 
       case 'checkout.session.expired':
@@ -241,23 +315,36 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
 
       case 'customer.subscription.deleted':
         const subscription = event.data.object;
+        // Find user by the subscription ID that was cancelled
         const user = await prisma.user.findFirst({
-          where: { subscriptionId: subscription.id }
+          where: { stripeSubscriptionId: subscription.id } // Use correct field
         });
         if (user) {
           await prisma.user.update({
             where: { id: user.id },
-            data: { subscriptionStatus: 'inactive' }
+            data: { subscriptionStatus: 'inactive' } // Set status to inactive
           });
-          console.log('Subscription cancelled for user:', user.id);
+          console.log(`Subscription deactivated for user: ${user.id}`);
+        } else {
+          console.warn(`Webhook Warning: Received customer.subscription.deleted for unknown subscription ID: ${subscription.id}`);
         }
         break;
+
+      // Optional: Handle subscription updates (e.g., plan changes) if needed
+      // case 'customer.subscription.updated':
+      //   const updatedSubscription = event.data.object;
+      //   // Logic to update user plan based on updatedSubscription details
+      //   break;
+
+      default:
+        console.log(`Unhandled event type ${event.type}`);
     }
 
-    res.json({ received: true });
-  } catch (err) {
-    console.error('Webhook error:', err.message);
-    return res.status(400).send(`Webhook Error: ${err.message}`);
+    // Return a 200 response to acknowledge receipt of the event
+    res.status(200).json({ received: true });
+  } catch (error) {
+    console.error('Webhook error:', error);
+    res.status(400).send(`Webhook Error: ${error.message}`);
   }
 });
 

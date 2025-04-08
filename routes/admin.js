@@ -290,4 +290,121 @@ router.get('/stats', async (req, res) => {
   }
 });
 
+// --- Professional Review Management --- 
+
+// GET /api/admin/reviews - List review orders with filtering and pagination
+router.get('/reviews', async (req, res) => {
+    try {
+        const page = parseInt(req.query.page) || 1;
+        const limit = 10;
+        const skip = (page - 1) * limit;
+        const statusFilter = req.query.status; // e.g., 'requested', 'completed'
+
+        const whereClause = {};
+        if (statusFilter) {
+            whereClause.status = statusFilter;
+        }
+
+        const [reviewOrders, total] = await Promise.all([
+            prisma.reviewOrder.findMany({
+                skip,
+                take: limit,
+                where: whereClause,
+                include: {
+                    user: { // Include user details
+                        select: { id: true, email: true, name: true }
+                    },
+                    resume: { // Include resume details
+                        select: { id: true, originalFileName: true }
+                    }
+                },
+                orderBy: {
+                    submittedDate: 'asc' // Show oldest requests first
+                }
+            }),
+            prisma.reviewOrder.count({ where: whereClause })
+        ]);
+
+        res.json({
+            reviewOrders,
+            total,
+            pages: Math.ceil(total / limit),
+            currentPage: page
+        });
+    } catch (error) {
+        console.error('Error fetching review orders:', error);
+        res.status(500).json({ error: 'Error fetching review orders' });
+    }
+});
+
+// PUT /api/admin/reviews/:reviewOrderId - Update review order status and feedback
+router.put('/reviews/:reviewOrderId', async (req, res) => {
+    try {
+        const reviewOrderId = parseInt(req.params.reviewOrderId);
+        // Expecting status and optional reviewerFeedback in the body
+        const { status, reviewerFeedback } = req.body; 
+
+        // Validate status (add more valid statuses as needed)
+        const validStatuses = ['requested', 'assigned', 'in_progress', 'completed', 'cancelled'];
+        if (status && !validStatuses.includes(status)) { // Allow updating feedback without changing status
+            return res.status(400).json({ error: `Invalid status provided. Valid statuses are: ${validStatuses.join(', ')}` });
+        }
+
+        const updateData = {};
+        if (status) {
+             updateData.status = status;
+             if (status === 'completed') {
+                 updateData.completedDate = new Date();
+             } else {
+                 // Clear completedDate if status is changed from completed?
+                 // updateData.completedDate = null; 
+             }
+        }
+        // Only update feedback if it's provided in the request body
+        if (typeof reviewerFeedback === 'string') {
+            updateData.reviewerFeedback = reviewerFeedback;
+        }
+        
+        // Check if there is anything to update
+        if (Object.keys(updateData).length === 0) {
+             return res.status(400).json({ error: 'No update data provided (status or reviewerFeedback required).' });
+        }
+
+        const updatedReviewOrder = await prisma.reviewOrder.update({
+            where: { id: reviewOrderId },
+            data: updateData,
+            include: { // Return updated order with user/resume info
+                 user: { select: { id: true, email: true, name: true } },
+                 resume: { select: { id: true, originalFileName: true } }
+            }
+        });
+
+        // Optional: Update the corresponding Resume status as well?
+        if (status === 'completed') {
+             await prisma.resume.update({
+                 where: { id: updatedReviewOrder.resumeId },
+                 data: { status: 'review_complete' } 
+             }).catch(err => console.error(`Admin: Failed to update related resume status for review ${reviewOrderId}`, err));
+             console.log(`Admin updated review order ${reviewOrderId} status to ${status}`);
+        }
+        if (updateData.reviewerFeedback) {
+             console.log(`Admin updated feedback for review order ${reviewOrderId}`);
+             // Optionally, also update the main Resume feedback field?
+             // await prisma.resume.update({
+             //     where: { id: updatedReviewOrder.resumeId },
+             //     data: { feedback: updateData.reviewerFeedback } 
+             // }).catch(err => console.error(`Admin: Failed to update related resume feedback for review ${reviewOrderId}`, err));
+        }
+        
+        res.json(updatedReviewOrder);
+
+    } catch (error) {
+        console.error(`Error updating review order ${req.params.reviewOrderId}:`, error);
+        if (error.code === 'P2025') { // Prisma code for record not found
+             return res.status(404).json({ error: 'Review order not found' });
+        }
+        res.status(500).json({ error: 'Error updating review order' });
+    }
+});
+
 module.exports = router; 
