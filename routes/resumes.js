@@ -1259,4 +1259,80 @@ router.get('/', async (req, res) => {
   }
 });
 
+// Get user stats in a single call
+router.get('/stats', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id; // Get user ID from the authenticated token
+    
+    // Get all stats in parallel for better performance
+    const [
+      resumes,
+      reviewOrders,
+      userProfile
+    ] = await Promise.all([
+      // Get all resumes for the user
+      prisma.resume.findMany({
+        where: { userId },
+        select: {
+          id: true,
+          status: true
+        }
+      }),
+      // Get all review orders for the user
+      prisma.reviewOrder.findMany({
+        where: { userId },
+        select: {
+          id: true,
+          status: true
+        }
+      }),
+      // Get user profile for credits
+      prisma.user.findUnique({
+        where: { id: userId },
+        select: {
+          ppuAtsCredits: true,
+          ppuOptimizationCredits: true
+        }
+      })
+    ]);
+    
+    // Calculate stats
+    const stats = {
+      // Total number of resumes uploaded
+      resumesUploaded: resumes.length,
+      
+      // Number of completed analyses (any resume with a completed status)
+      analysesCompleted: resumes.filter(r => 
+        r.status === 'basic_ats_complete' || 
+        r.status === 'detailed_ats_complete' || 
+        r.status === 'job_opt_complete' ||
+        r.status === 'review_complete'
+      ).length,
+      
+      // Number of pending reviews
+      pendingReviews: reviewOrders.filter(r => 
+        r.status === 'requested' || 
+        r.status === 'in_progress'
+      ).length,
+      
+      // Number of completed reviews
+      completedReviews: reviewOrders.filter(r => 
+        r.status === 'completed'
+      ).length,
+      
+      // User's available credits
+      atsCredits: userProfile.ppuAtsCredits,
+      optimizationCredits: userProfile.ppuOptimizationCredits
+    };
+    
+    res.json(stats);
+  } catch (error) {
+    console.error('Error fetching user stats:', error);
+    res.status(500).json({ 
+      error: 'Error fetching user statistics',
+      details: process.env.NODE_ENV === 'development' ? error.message : 'An unexpected error occurred'
+    });
+  }
+});
+
 module.exports = { router, freeATSRouter }; 
