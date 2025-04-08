@@ -630,13 +630,47 @@ router.get('/download-optimized/:id', async (req, res) => {
   }
 });
 
+router.get('/reviews', async (req, res) => {
+  const userId = req.user.id;
+
+  try {
+    const reviewOrders = await prisma.reviewOrder.findMany({
+      where: { userId: userId },
+      include: {
+        resume: {
+          select: { id: true, originalFileName: true }
+        }
+      },
+      orderBy: {
+        submittedDate: 'desc'
+      }
+    });
+
+    res.json(reviewOrders);
+  } catch (error) {
+    console.error(`Error fetching review orders for user ${userId}:`, error);
+    res.status(500).json({ 
+      error: 'Error fetching review orders',
+      details: process.env.NODE_ENV === 'development' ? error.message : 'An unexpected error occurred'
+    });
+  }
+});
+
 // Get single resume route
 router.get('/:id', async (req, res) => {
   try {
     const resumeId = parseInt(req.params.id);
+    if (isNaN(resumeId)) {
+      return res.status(400).json({ error: 'Invalid resume ID' });
+    }
+
     const resume = await prisma.resume.findUnique({
-      where: { id: resumeId },
-      include: { user: true }
+      where: {
+        id: resumeId
+      },
+      include: {
+        user: true
+      }
     });
 
     if (!resume) {
@@ -646,7 +680,10 @@ router.get('/:id', async (req, res) => {
     res.json(resume);
   } catch (error) {
     console.error('Fetch error:', error);
-    res.status(500).json({ error: 'Error fetching resume' });
+    res.status(500).json({ 
+      error: 'Error fetching resume',
+      details: process.env.NODE_ENV === 'development' ? error.message : 'An unexpected error occurred'
+    });
   }
 });
 
@@ -677,21 +714,20 @@ router.post('/:resumeId/detailed-ats-report', async (req, res) => {
 
     // 2. Authorization Check (Premium or PPU)
     if (user.subscriptionStatus !== 'premium' && user.ppuAtsCredits <= 0) {
-        return res.status(403).json({ error: 'Forbidden: Premium subscription or ATS report credit required.' });
+        return res.status(403).json({ error: 'Forbidden: Premium subscription or Detailed ATS credit required.' });
     }
 
-    // 3. Decrement PPU credit if necessary (within a transaction for safety)
+    // 3. Decrement PPU credit if necessary
     if (user.subscriptionStatus !== 'premium') {
         try {
            await prisma.user.update({
-               where: { id: userId },
-               data: { ppuAtsCredits: { decrement: 1 } }
+                where: { id: userId },
+                data: { ppuAtsCredits: { decrement: 1 } }
            });
            usedPpuCredit = true;
            console.log(`Decremented PPU ATS credit for user ${userId}.`);
         } catch (error) {
-            console.error(`Error decrementing PPU credit for user ${userId}:`, error);
-            // Handle potential errors like insufficient credits if check failed somehow
+            console.error(`Error processing PPU ATS credit for user ${userId}:`, error);
             return res.status(500).json({ error: 'Failed to process PPU credit.' });
         }
     }
@@ -1100,9 +1136,9 @@ router.get('/reviews', async (req, res) => {
     const reviewOrders = await prisma.reviewOrder.findMany({
       where: { userId: userId },
       include: {
-          resume: { // Include basic resume info
-              select: { id: true, originalFileName: true }
-          }
+        resume: {
+          select: { id: true, originalFileName: true }
+        }
       },
       orderBy: {
         submittedDate: 'desc'
@@ -1114,8 +1150,8 @@ router.get('/reviews', async (req, res) => {
   } catch (error) {
     console.error(`Error fetching review orders for user ${userId}:`, error);
     res.status(500).json({ 
-      error: 'Error fetching review orders', 
-      details: error.message || 'An unexpected error occurred.'
+      error: 'Error fetching review orders',
+      details: process.env.NODE_ENV === 'development' ? error.message : 'An unexpected error occurred'
     });
   }
 });
@@ -1199,6 +1235,26 @@ router.put('/:resumeId/text', async (req, res) => {
     res.status(500).json({ 
       error: 'Failed to save resume text', 
       details: error.message || 'An unexpected error occurred.'
+    });
+  }
+});
+
+// Get all resumes for the current user
+router.get('/', async (req, res) => {
+  try {
+    const userId = req.user.id; // From authenticateToken middleware
+    
+    const resumes = await prisma.resume.findMany({
+      where: { userId: userId },
+      orderBy: { submittedAt: 'desc' }
+    });
+
+    res.json(resumes);
+  } catch (error) {
+    console.error('Fetch error:', error);
+    res.status(500).json({ 
+      error: 'Error fetching resumes',
+      details: process.env.NODE_ENV === 'development' ? error.message : 'An unexpected error occurred'
     });
   }
 });

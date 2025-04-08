@@ -35,14 +35,21 @@ const allowedOrigins = [
   'https://resumeoptimizer.io',
   'https://www.resumeoptimizer.io',
   'https://res-server-fito.onrender.com',
-  'http://localhost:5173',  // For local development
-  'http://localhost:3000'   // For local development
+  'http://localhost:5173',  // Vite default port
+  'http://127.0.0.1:5173',  // Vite default port (alternative)
+  'http://localhost:3000',  // Alternative frontend port
+  'http://127.0.0.1:3000'   // Alternative frontend port
 ];
 
 app.use(cors({
   origin: function(origin, callback) {
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
+    
+    // In development, allow all origins
+    if (process.env.NODE_ENV === 'development') {
+      return callback(null, true);
+    }
     
     if (allowedOrigins.indexOf(origin) === -1) {
       console.log('Blocked origin:', origin);
@@ -53,7 +60,7 @@ app.use(cors({
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 }));
 
 // Special handling for Stripe webhook

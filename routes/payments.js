@@ -8,9 +8,9 @@ const prisma = new PrismaClient();
 const serviceConfig = {
   subscription: {
     priceId: process.env.STRIPE_PRICE_ID_SUBSCRIPTION || 'price_sub_placeholder', // Use env var or placeholder
-    description: 'Premium Subscription ($15/month)',
+    description: 'Premium Subscription ($20/month)',
     recurring: true,
-    amount: 1500 // $15.00 in cents (for reference)
+    amount: 2000 // $20.00 in cents (for reference)
   },
   review: { // Changed from professionalReview
     priceId: process.env.STRIPE_PRICE_ID_REVIEW || 'price_review_placeholder', // Use env var or placeholder
@@ -26,9 +26,9 @@ const serviceConfig = {
   },
   ppu_optimization: { // Changed from keywordOpt/tailoredSuggestions
     priceId: process.env.STRIPE_PRICE_ID_PPU_OPT || 'price_ppu_opt_placeholder', // Use env var or placeholder
-    description: 'Pay-Per-Use: Job-Specific Optimization ($5)',
+    description: 'Pay-Per-Use: Job-Specific Optimization ($10)',
     recurring: false,
-    amount: 500 // $5.00 in cents
+    amount: 1000 // $10.00 in cents
   }
   // Removed keywordOpt and tailoredSuggestions as they are covered by ppu_optimization
 };
@@ -404,19 +404,27 @@ router.get('/check-payment/:sessionId', async (req, res) => {
           paymentStatus: updatedResume.paymentStatus
         });
       } else {
-        const servicePurchase = await prisma.servicePurchase.create({
-          data: {
-            userId: parseInt(userId),
-            serviceType,
-            paymentStatus: 'success',
-            amount
-          }
-        });
+        // Handle PPU credits
+        if (serviceType === 'ppu_ats') {
+          await prisma.user.update({
+            where: { id: parseInt(userId) },
+            data: {
+              ppuAtsCredits: { increment: 1 }
+            }
+          });
+        } else if (serviceType === 'ppu_optimization') {
+          await prisma.user.update({
+            where: { id: parseInt(userId) },
+            data: {
+              ppuOptimizationCredits: { increment: 1 }
+            }
+          });
+        }
+        
         return res.json({
           status: session.payment_status,
           amount,
-          metadata: session.metadata,
-          servicePurchaseId: servicePurchase.id
+          metadata: session.metadata
         });
       }
     }
