@@ -292,7 +292,7 @@ router.get('/stats', async (req, res) => {
 
 // --- Professional Review Management --- 
 
-// GET /api/admin/reviews - List review orders with filtering and pagination
+// GET /api/admin/reviews
 router.get('/reviews', async (req, res) => {
     try {
         const page = parseInt(req.query.page) || 1;
@@ -311,15 +311,27 @@ router.get('/reviews', async (req, res) => {
                 take: limit,
                 where: whereClause,
                 include: {
-                    user: { // Include user details
+                    user: {
                         select: { id: true, email: true, name: true }
                     },
-                    resume: { // Include resume details
-                        select: { id: true, originalFileName: true }
+                    resume: {
+                        select: {
+                            id: true,
+                            originalFileName: true,
+                            atsScore: true,
+                            optimizationScore: true,
+                            keywordAnalysis: true,
+                            feedback: true,
+                            jobDescription: true,
+                            status: true,
+                            submittedAt: true,
+                            optimizedResume: true,
+                            editedText: true
+                        }
                     }
                 },
                 orderBy: {
-                    submittedDate: 'asc' // Show oldest requests first
+                    submittedDate: 'asc'
                 }
             }),
             prisma.reviewOrder.count({ where: whereClause })
@@ -333,11 +345,11 @@ router.get('/reviews', async (req, res) => {
         });
     } catch (error) {
         console.error('Error fetching review orders:', error);
-        res.status(500).json({ error: 'Error fetching review orders' });
+        const errorDetails = process.env.NODE_ENV === 'development' ? error.message : 'Internal server error';
+        res.status(500).json({ error: 'Error fetching review orders', details: errorDetails });
     }
 });
 
-// PUT /api/admin/reviews/:reviewOrderId - Update review order status and feedback
 router.put('/reviews/:reviewOrderId', async (req, res) => {
     try {
         const reviewOrderId = parseInt(req.params.reviewOrderId);

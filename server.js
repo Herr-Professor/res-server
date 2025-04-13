@@ -9,6 +9,7 @@ const authRoutes = require('./routes/auth');
 const { router: resumeRoutes, freeATSRouter } = require('./routes/resumes');
 const adminRoutes = require('./routes/admin');
 const paymentRoutes = require('./routes/payments');
+const jobsRoutes = require('./routes/jobs');
 const { authenticateToken, isAdmin } = require('./middleware/auth');
 
 const prisma = new PrismaClient({
@@ -80,10 +81,11 @@ app.get('/healthx', (req, res) => {
 
 // Routes
 app.use('/api/auth', authRoutes);
-app.use('/api/resumes/free-ats-check', freeATSRouter); // Free ATS check route without auth
+app.use('/api/resumes/free-ats-check', freeATSRouter);
 app.use('/api/resumes', authenticateToken, resumeRoutes);
 app.use('/api/admin', authenticateToken, isAdmin, adminRoutes);
-app.use('/api/payment', paymentRoutes); // Mount payment routes at /api/payment
+app.use('/api/payment', paymentRoutes);
+app.use('/api/jobs', jobsRoutes);
 
 // 404 handler
 app.use((req, res) => {

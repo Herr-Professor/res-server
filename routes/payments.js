@@ -1,3 +1,4 @@
+//payments.js
 const express = require('express');
 const { PrismaClient } = require('@prisma/client');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
@@ -7,35 +8,34 @@ const prisma = new PrismaClient();
 // Updated service configuration aligned with schema and Resopt.txt
 const serviceConfig = {
   subscription: {
-    priceId: process.env.STRIPE_PRICE_ID_SUBSCRIPTION || 'price_sub_placeholder', // Use env var or placeholder
+    priceId: process.env.STRIPE_PRICE_ID_SUBSCRIPTION,
     description: 'Premium Subscription ($20/month)',
     recurring: true,
-    amount: 2000 // $20.00 in cents (for reference)
+    amount: 2000
   },
-  review: { // Changed from professionalReview
-    priceId: process.env.STRIPE_PRICE_ID_REVIEW || 'price_review_placeholder', // Use env var or placeholder
+  review: {
+    priceId: process.env.STRIPE_PRICE_ID_REVIEW,
     description: 'Professional Resume Review ($30)',
     recurring: false,
     amount: 3000 // $30.00 in cents
   },
-  ppu_ats: { // Changed from atsReport
-    priceId: process.env.STRIPE_PRICE_ID_PPU_ATS || 'price_ppu_ats_placeholder', // Use env var or placeholder
+  ppu_ats: {
+    priceId: process.env.STRIPE_PRICE_ID_PPU_ATS,
     description: 'Pay-Per-Use: Detailed ATS Report ($5)',
     recurring: false,
     amount: 500 // $5.00 in cents
   },
-  ppu_optimization: { // Changed from keywordOpt/tailoredSuggestions
-    priceId: process.env.STRIPE_PRICE_ID_PPU_OPT || 'price_ppu_opt_placeholder', // Use env var or placeholder
+  ppu_optimization: {
+    priceId: process.env.STRIPE_PRICE_ID_PPU_OPT,
     description: 'Pay-Per-Use: Job-Specific Optimization ($10)',
     recurring: false,
     amount: 1000 // $10.00 in cents
   }
-  // Removed keywordOpt and tailoredSuggestions as they are covered by ppu_optimization
 };
 
 // Discount codes configuration
 const DISCOUNT_CODES = {
-  'tonfans25': 0.5 // 50% off for one-time payments
+  'tonfans25': 0.25
 };
 
 /**
@@ -111,7 +111,7 @@ router.post('/create-checkout-session', async (req, res) => {
     console.log('Creating checkout session:', {
       serviceType,
       mode: service.recurring ? 'subscription' : 'payment',
-      price: service.recurring ? '$15/month' : `${finalPrice / 100} USD`,
+      price: service.recurring ? '20' : `${finalPrice / 100} USD`,
       discount: appliedDiscount
     });
 
@@ -212,15 +212,16 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
 
         // Handle based on serviceType from metadata
         if (serviceType === 'subscription') {
-          await prisma.user.update({
-            where: { id: parsedUserId },
-            data: {
-              stripeSubscriptionId: session.subscription, // Correct field from session for subscriptions
-              subscriptionStatus: 'premium' // Updated status
-            }
-          });
-          console.log(`Subscription activated for user: ${parsedUserId}`);
-
+           await prisma.user.update({
+             where: { id: parsedUserId },
+             data: {
+                stripeSubscriptionId: session.subscription,
+                subscriptionStatus: 'premium',
+                ppuAtsCredits: { increment: 20 },
+                ppuOptimizationCredits: { increment: 10 }
+              }
+            });
+            console.log(`Subscription activated with credits for user: ${parsedUserId}`);
         } else if (serviceType === 'ppu_ats') {
            await prisma.user.update({
              where: { id: parsedUserId },
@@ -349,7 +350,7 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
 });
 
 /**
- * Check payment status for a given session ID
+ * Check payment status for a given session ID (READ-ONLY)
  */
 router.get('/check-payment/:sessionId', async (req, res) => {
   res.header('Access-Control-Allow-Origin', process.env.CLIENT_URL);
@@ -359,7 +360,10 @@ router.get('/check-payment/:sessionId', async (req, res) => {
     const { sessionId } = req.params;
     console.log('Checking payment status for session:', sessionId);
 
-    const session = await stripe.checkout.sessions.retrieve(sessionId);
+    const session = await stripe.checkout.sessions.retrieve(sessionId, {
+      expand: ['payment_intent', 'subscription']
+    });
+
     console.log('Retrieved session details:', {
       id: session.id,
       status: session.payment_status,
@@ -367,73 +371,21 @@ router.get('/check-payment/:sessionId', async (req, res) => {
       metadata: session.metadata
     });
 
-    if (session.payment_status === 'paid') {
-      const { serviceType, userId, resumeId } = session.metadata;
-      const amount = session.amount_total / 100;
+    // Simplified response - no database updates
+    const responseData = {
+      status: session.payment_status,
+      amount: session.amount_total ? session.amount_total / 100 : 0,
+      metadata: session.metadata,
+      serviceType: session.metadata?.serviceType,
+      customerEmail: session.customer_details?.email
+    };
 
-      if (serviceType === 'subscription') {
-        const updatedUser = await prisma.user.update({
-          where: { id: parseInt(userId) },
-          data: {
-            subscriptionId: session.subscription,
-            subscriptionStatus: 'active'
-          }
-        });
-        return res.json({
-          status: session.payment_status,
-          amount,
-          metadata: session.metadata,
-          subscriptionStatus: updatedUser.subscriptionStatus
-        });
-      } else if (resumeId) {
-        const updatedResume = await prisma.resume.update({
-          where: { id: parseInt(resumeId) },
-          data: {
-            status: 'processing',
-            paymentStatus: 'success',
-            paymentAmount: amount,
-            price: amount,
-            stripePaymentIntentId: session.payment_intent
-          }
-        });
-        return res.json({
-          status: session.payment_status,
-          amount,
-          metadata: session.metadata,
-          resumeStatus: updatedResume.status,
-          paymentStatus: updatedResume.paymentStatus
-        });
-      } else {
-        // Handle PPU credits
-        if (serviceType === 'ppu_ats') {
-          await prisma.user.update({
-            where: { id: parseInt(userId) },
-            data: {
-              ppuAtsCredits: { increment: 1 }
-            }
-          });
-        } else if (serviceType === 'ppu_optimization') {
-          await prisma.user.update({
-            where: { id: parseInt(userId) },
-            data: {
-              ppuOptimizationCredits: { increment: 1 }
-            }
-          });
-        }
-        
-        return res.json({
-          status: session.payment_status,
-          amount,
-          metadata: session.metadata
-        });
-      }
+    // Add subscription ID if present
+    if (session.subscription) {
+      responseData.subscriptionId = session.subscription;
     }
 
-    res.json({
-      status: session.payment_status,
-      amount: session.amount_total / 100,
-      metadata: session.metadata
-    });
+    res.json(responseData);
   } catch (error) {
     console.error('Error checking payment status:', error);
     res.status(500).json({
