@@ -84,6 +84,36 @@ app.use('/api/admin', authenticateToken, isAdmin, adminRoutes);
 app.use('/api/payment', paymentRoutes);
 app.use('/api/jobs', jobsRoutes);
 
+    // --- TEMPORARY DEBUGGING: Define download route directly ---
+    app.get('/api/resumes/download-original/:id', authenticateToken, async (req, res) => {
+      try {
+        const resumeId = parseInt(req.params.id);
+        console.log(`[DEBUG SERVER.JS] Download request for ID: ${resumeId}`); // Added console log
+        const resume = await prisma.resume.findUnique({
+          where: { id: resumeId },
+          select: { fileUrl: true, originalFileName: true }
+        });
+
+        if (!resume) {
+          return res.status(404).json({ error: '[DEBUG] Resume record not found in database', requestedId: resumeId });
+        }
+        if (!resume.fileUrl) {
+          return res.status(404).json({ error: '[DEBUG] Resume record found, but fileUrl is missing', requestedId: resumeId });
+        }
+
+        console.log(`[DEBUG SERVER.JS] Redirecting download for ID ${resumeId} to: ${resume.fileUrl}`); // Added console log
+        res.redirect(302, resume.fileUrl);
+
+      } catch (error) {
+        console.error('[DEBUG SERVER.JS] Download error:', error); // Added console log
+        res.status(500).json({
+          error: '[DEBUG] Error processing download for original resume',
+          details: error.message
+        });
+      }
+    });
+    // --- END TEMPORARY DEBUGGING ---
+
 // 404 handler
 app.use((req, res) => {
   console.log(`404 - Not Found: ${req.method} ${req.url}`);
