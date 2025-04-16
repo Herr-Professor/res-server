@@ -566,36 +566,6 @@ router.get('/user/:userId', async (req, res) => {
   }
 });
 
-router.get('/:id', async (req, res) => {
-  try {
-    const resumeId = parseInt(req.params.id);
-    if (isNaN(resumeId)) {
-      return res.status(400).json({ error: 'Invalid resume ID' });
-    }
-
-    const resume = await prisma.resume.findUnique({
-      where: {
-        id: resumeId
-      },
-      include: {
-        user: true
-      }
-    });
-
-    if (!resume) {
-      return res.status(404).json({ error: 'Resume not found' });
-    }
-
-    res.json(resume);
-  } catch (error) {
-    console.error('Fetch error:', error);
-    res.status(500).json({ 
-      error: 'Error fetching resume',
-      details: process.env.NODE_ENV === 'development' ? error.message : 'An unexpected error occurred'
-    });
-  }
-});
-
 router.get('/download-original/:id', async (req, res) => {
   try {
     const resumeId = parseInt(req.params.id);
@@ -1228,6 +1198,52 @@ freeATSRouter.post('/', upload.single('resume'), handleMulterError, async (req, 
             details: process.env.NODE_ENV === 'development' ? error.message : undefined
         });
     }
+  }
+});
+
+// --- Define general /:id route LAST --- 
+router.get('/:id', async (req, res) => {
+  try {
+    const resumeId = parseInt(req.params.id);
+    if (isNaN(resumeId)) {
+      return res.status(400).json({ error: 'Invalid resume ID' });
+    }
+
+    // Check if the user is authenticated (added manually since this might be hit unauthenticated now?)
+    // Although authenticateToken is applied globally in server.js, let's be safe.
+    if (!req.user) { 
+       return res.status(401).json({ error: 'Authentication required to view resume details.'});
+    }
+
+    const resume = await prisma.resume.findUnique({
+      where: {
+        id: resumeId
+      },
+      include: {
+        user: true // Include user details if needed
+      }
+    });
+
+    if (!resume) {
+      return res.status(404).json({ error: 'Resume not found' });
+    }
+
+    // Authorization check: Ensure the logged-in user owns the resume
+    if (resume.userId !== req.user.id) {
+       return res.status(403).json({ error: 'Forbidden: You do not own this resume.'});
+    }
+
+    // Optionally remove sensitive data before sending
+    // delete resume.user.password;
+    // delete resume.user.stripeSubscriptionId;
+
+    res.json(resume);
+  } catch (error) {
+    console.error('Fetch error for /:id:', error);
+    res.status(500).json({ 
+      error: 'Error fetching resume',
+      details: process.env.NODE_ENV === 'development' ? error.message : 'An unexpected error occurred'
+    });
   }
 });
 
