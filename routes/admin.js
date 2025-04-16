@@ -3,6 +3,7 @@ const { PrismaClient } = require('@prisma/client');
 const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
+const { put } = require('@vercel/blob');
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -17,24 +18,14 @@ if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
 
-// Configure multer for optimized resume upload
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, uploadsDir);
-  },
-  filename: function (req, file, cb) {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, 'optimized-' + uniqueSuffix + path.extname(file.originalname));
-  }
-});
-
+// Configure multer for optimized resume upload using MEMORY storage
 const upload = multer({
-  storage: storage,
+  storage: multer.memoryStorage(),
   fileFilter: (req, file, cb) => {
-    if (file.mimetype === 'application/pdf') {
+    if (file.mimetype === 'application/pdf' || file.mimetype === 'application/msword' || file.mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
       cb(null, true);
     } else {
-      cb(new Error('Only PDF files are allowed!'), false);
+      cb(new Error('Only PDF, DOC, and DOCX files are allowed for optimized resumes!'), false);
     }
   },
   limits: {
@@ -119,82 +110,65 @@ router.get('/submissions', async (req, res) => {
   }
 });
 
-// Download original resume
+// Download original resume (Admin)
 router.get('/submissions/:id/download-original', async (req, res) => {
   try {
     const resumeId = parseInt(req.params.id);
     const resume = await prisma.resume.findUnique({
-      where: { id: resumeId }
+      where: { id: resumeId },
+      select: { fileUrl: true }
     });
 
-    if (!resume) {
-      console.error('Resume not found in database:', resumeId);
+    if (!resume || !resume.fileUrl) {
       return res.status(404).json({ 
-        error: 'Resume not found',
-        details: 'The requested resume does not exist'
+        error: 'Original resume file URL not found',
+        details: 'The URL for the original resume does not exist'
       });
     }
 
-    const filePath = path.join(uploadsDir, resume.fileName);
-    console.log('Attempting to download file from:', filePath);
-    
-    if (!fs.existsSync(filePath)) {
-      console.error('File not found at path:', filePath);
-      return res.status(404).json({ 
-        error: 'File not found',
-        details: 'The resume file is no longer available'
-      });
-    }
+    console.log(`Admin downloading original resume ${resumeId}, redirecting to: ${resume.fileUrl}`);
+    res.redirect(302, resume.fileUrl);
 
-    res.download(filePath, resume.originalFileName);
   } catch (error) {
-    console.error('Download error:', error);
+    console.error('Admin Download Original error:', error);
     res.status(500).json({ 
-      error: 'Error downloading resume',
+      error: 'Error processing download for original resume',
       details: process.env.NODE_ENV === 'development' ? error.message : 'An unexpected error occurred'
     });
   }
 });
 
-// Download optimized resume
+// Download optimized resume (Admin)
 router.get('/submissions/:id/download-optimized', async (req, res) => {
   try {
     const resumeId = parseInt(req.params.id);
     const resume = await prisma.resume.findUnique({
-      where: { id: resumeId }
+      where: { id: resumeId },
+      select: { optimizedResume: true }
     });
 
     if (!resume || !resume.optimizedResume) {
-      console.error('Resume or optimized file not found in database:', resumeId);
       return res.status(404).json({ 
-        error: 'Optimized resume not found',
-        details: 'The optimized version of this resume is not available'
+        error: 'Optimized resume URL not found',
+        details: 'The URL for the optimized version of this resume is not available'
       });
     }
 
-    const filePath = path.join(uploadsDir, resume.optimizedResume);
-    console.log('Attempting to download optimized file from:', filePath);
-    
-    if (!fs.existsSync(filePath)) {
-      console.error('File not found at path:', filePath);
-      // Update the resume record if file is missing
-      await prisma.resume.update({
-        where: { id: resumeId },
-        data: {
-          optimizedResume: null
-        }
-      });
-      return res.status(404).json({ 
-        error: 'File not found',
-        details: 'The optimized resume file is no longer available'
-      });
+    if (typeof resume.optimizedResume === 'string' && resume.optimizedResume.startsWith('http')) {
+        console.log(`Admin downloading optimized resume ${resumeId}, redirecting to: ${resume.optimizedResume}`);
+        res.redirect(302, resume.optimizedResume);
+    } else {
+        console.error(`Admin Download Optimized Error: Field optimizedResume for resume ${resumeId} is not a valid URL: ${resume.optimizedResume}`);
+        return res.status(500).json({ 
+            error: 'Optimized file path is misconfigured',
+            details: 'The stored path for the optimized file is not a valid URL.'
+        });
     }
 
-    res.download(filePath, `optimized-${resume.originalFileName}`);
   } catch (error) {
-    console.error('Download error:', error);
+    console.error('Admin Download Optimized error:', error);
     res.status(500).json({ 
-      error: 'Error downloading optimized resume',
+      error: 'Error processing download for optimized resume',
       details: process.env.NODE_ENV === 'development' ? error.message : 'An unexpected error occurred'
     });
   }
@@ -214,7 +188,22 @@ router.put('/submissions/:id', upload.single('optimizedResume'), async (req, res
     };
 
     if (file) {
-      updateData.optimizedResume = file.filename;
+      console.log(`Admin uploading optimized file: ${file.originalname} for resume ${resumeId}`);
+      let optimizedBlobUrl = null;
+      try {
+        const blobFilename = `optimized-${resumeId}-${Date.now()}-${file.originalname}`;
+        
+        const blob = await put(blobFilename, file.buffer, {
+          access: 'public',
+          contentType: file.mimetype
+        });
+        optimizedBlobUrl = blob.url;
+        updateData.optimizedResume = optimizedBlobUrl;
+        console.log(`Optimized file uploaded to Vercel Blob: ${optimizedBlobUrl}`);
+      } catch (uploadError) {
+        console.error('Error uploading optimized file to Vercel Blob:', uploadError);
+        return res.status(500).json({ error: 'Failed to upload optimized file to storage.' });
+      }
     }
 
     const resume = await prisma.resume.update({
@@ -224,7 +213,7 @@ router.put('/submissions/:id', upload.single('optimizedResume'), async (req, res
 
     res.json(resume);
   } catch (error) {
-    console.error('Update error:', error);
+    console.error('Admin Update error:', error);
     res.status(500).json({ error: 'Error updating submission' });
   }
 });

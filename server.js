@@ -71,9 +71,6 @@ app.post('/api/payment/webhook', express.raw({type: 'application/json'}));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Static files
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
-
 // Health check endpoint for Render
 app.get('/healthx', (req, res) => {
   res.status(200).json({ status: 'healthy' });

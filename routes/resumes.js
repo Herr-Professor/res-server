@@ -8,33 +8,14 @@ const pdfParse = require('pdf-parse');
 const mammoth = require('mammoth');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { authenticateToken } = require('../middleware/auth');
+const { put } = require('@vercel/blob');
+const fetch = require('node-fetch');
 
 const router = express.Router();
 const freeATSRouter = express.Router();
 const prisma = new PrismaClient();
 
-// Define uploads directory based on environment
-const uploadsDir = process.env.NODE_ENV === 'production'
-  ? path.join('/tmp', 'uploads')
-  : path.join(process.cwd(), 'uploads');
-
-// Ensure uploads directory exists
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
-}
-
-// Configure multer for file upload
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, uploadsDir);
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    const ext = path.extname(file.originalname).toLowerCase();
-    cb(null, uniqueSuffix + ext);
-  }
-});
-
+// Configure multer for file upload using memory storage
 const fileFilter = (req, file, cb) => {
   const allowedMimeTypes = [
     'application/pdf',
@@ -48,8 +29,9 @@ const fileFilter = (req, file, cb) => {
   }
 };
 
+// Use memoryStorage instead of diskStorage
 const upload = multer({ 
-  storage: storage,
+  storage: multer.memoryStorage(),
   fileFilter: fileFilter,
   limits: {
     fileSize: 5 * 1024 * 1024 // 5MB limit
@@ -87,24 +69,71 @@ if (!process.env.GEMINI_API_KEY) {
 const genAI = process.env.GEMINI_API_KEY ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY) : null;
 const geminiModel = genAI ? genAI.getGenerativeModel({ model: "gemini-2.0-flash" }) : null;
 
-// Helper functions (unchanged)
-async function extractTextFromFile(filePath, mimeType) {
+// Helper functions
+async function fetchBlobContent(fileUrl) {
   try {
+    console.log(`Fetching file content from blob URL: ${fileUrl}`);
+    const response = await fetch(fileUrl);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch blob: ${response.status} ${response.statusText}`);
+    }
+    const buffer = await response.buffer(); // Use .buffer() with node-fetch v2/v3
+    console.log(`Successfully fetched blob content, size: ${buffer.length} bytes`);
+    return buffer;
+  } catch (error) {
+    console.error(`Error fetching content from ${fileUrl}:`, error);
+    throw new Error(`Failed to fetch file content from storage: ${error.message}`);
+  }
+}
+
+async function extractTextFromFile(source, mimeType) {
+  try {
+    let dataBuffer;
+    if (Buffer.isBuffer(source)) {
+      console.log('Extracting text directly from buffer.');
+      dataBuffer = source;
+    } else if (typeof source === 'string' && source.startsWith('http')) {
+      console.log('Source is a URL, fetching content first.');
+      dataBuffer = await fetchBlobContent(source);
+    } else {
+      // Keep local file path logic only if absolutely needed elsewhere, 
+      // otherwise, assume buffer or URL.
+      // For Vercel, local paths are unlikely to be used post-upload.
+      // console.log('Source is assumed to be a local path.');
+      // dataBuffer = await fsPromises.readFile(source);
+      throw new Error('Unsupported source type for text extraction. Expected buffer or URL.');
+    }
+
+    if (!mimeType) {
+        // Attempt to infer mime type from URL if possible
+        if (typeof source === 'string' && source.startsWith('http')) {
+            const inferredMimeType = require('mime-types').lookup(source);
+            if (inferredMimeType) {
+                mimeType = inferredMimeType;
+                console.log(`Inferred mime type from URL: ${mimeType}`);
+            } else {
+                 throw new Error('Cannot determine mime type for text extraction from URL.');
+            }
+        } else {
+            throw new Error('Mime type is required for text extraction from buffer.');
+        }
+    }
+
+    console.log(`Extracting text with mime type: ${mimeType}`);
     if (mimeType === 'application/pdf') {
-      const dataBuffer = await fsPromises.readFile(filePath);
       const data = await pdfParse(dataBuffer);
       return data.text;
     } else if (
       mimeType === 'application/msword' ||
       mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
     ) {
-      const result = await mammoth.extractRawText({ path: filePath });
+      const result = await mammoth.extractRawText({ buffer: dataBuffer });
       return result.value;
     } else {
       throw new Error('Unsupported file type for text extraction');
     }
   } catch (error) {
-    console.error(`Error extracting text from ${filePath}:`, error);
+    console.error(`Error extracting text:`, error);
     throw new Error(`Failed to extract text: ${error.message}`);
   }
 }
@@ -407,27 +436,48 @@ router.post('/', upload.single('resume'), handleMulterError, async (req, res) =>
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
+    // --- Vercel Blob Upload --- 
+    let blobUrl = null;
+    try {
+      const blobFilename = `${userId}-${Date.now()}-${req.file.originalname}`;
+      const blob = await put(blobFilename, req.file.buffer, {
+        access: 'public', // Set to public to allow easy downloading later
+        contentType: req.file.mimetype,
+        addRandomSuffix: false, // Use our specific filename
+        // Consider adding cache control if needed
+        // cacheControlMaxAge: 3600, 
+      });
+      blobUrl = blob.url;
+      console.log(`File uploaded to Vercel Blob: ${blobUrl}`);
+    } catch (uploadError) {
+      console.error('Error uploading to Vercel Blob:', uploadError);
+      return res.status(500).json({ error: 'Failed to store uploaded file.' });
+    }
+    // --- End Vercel Blob Upload ---
+
     resumeRecord = await prisma.resume.create({
       data: {
         userId: userId,
-        fileName: req.file.filename,
+        fileUrl: blobUrl, // <-- Save the Vercel Blob URL
         originalFileName: req.file.originalname,
         jobInterest,
         description,
-        status: 'basic_ats_pending',
-        type: 'paid'
+        status: 'uploaded', // Set initial status, analysis will update it
+        type: 'paid' // Assuming authenticated uploads are part of paid service
       }
     });
-    console.log(`Created initial resume entry for user ${userId}: ${resumeRecord.id}`);
+    console.log(`Created initial resume entry for user ${userId}: ${resumeRecord.id} with URL: ${resumeRecord.fileUrl}`);
 
+    // --- Analysis needs the file content --- 
+    // TODO: Update analysis logic later to fetch from blobUrl or use req.file.buffer
     let analysisResult = null;
     let finalResumeData = null;
     try {
-      console.log(`Extracting text from: ${req.file.path}`);
-      const resumeText = await extractTextFromFile(req.file.path, req.file.mimetype);
+      console.log(`Performing basic ATS check directly from buffer for resume: ${resumeRecord.id}`);
+      // Directly pass the buffer and mimetype to the extraction function
+      const resumeText = await extractTextFromFile(req.file.buffer, req.file.mimetype);
       console.log(`Text extracted successfully for resume: ${resumeRecord.id}, length: ${resumeText.length}`);
       
-      console.log(`Performing basic ATS check for resume: ${resumeRecord.id}`);
       analysisResult = performBasicAtsCheck(resumeText);
       console.log(`Basic ATS check completed for resume: ${resumeRecord.id}, score: ${analysisResult.score}`);
 
@@ -436,30 +486,32 @@ router.post('/', upload.single('resume'), handleMulterError, async (req, res) =>
         data: {
           atsScore: analysisResult.score,
           feedback: analysisResult.feedback,
-          status: 'basic_ats_complete'
+          status: 'basic_ats_complete' // Update status after successful analysis
         }
       });
       console.log(`Updated resume record ${resumeRecord.id} with ATS results.`);
       
     } catch (analysisError) {
       console.error(`Error during initial ATS analysis for resume ${resumeRecord?.id}:`, analysisError);
+      // Update status even if analysis fails
       finalResumeData = await prisma.resume.update({
         where: { id: resumeRecord.id },
         data: { status: 'basic_ats_failed' }
       });
+      // Return the created record info but indicate analysis failed
       return res.status(201).json({ 
         ...finalResumeData, 
         analysisError: `Failed to perform initial ATS check: ${analysisError.message}` 
       });
     }
+    // --- End Analysis --- 
 
     res.status(201).json(finalResumeData);
 
   } catch (error) {
     console.error('Authenticated upload error:', error);
-    if (!resumeRecord && req.file && req.file.path) {
-      await fsPromises.unlink(req.file.path).catch(err => console.error('Error deleting orphaned file on upload error:', err));
-    }
+    // No file to delete from local disk anymore
+    // if (!resumeRecord && req.file && req.file.path) { ... }
     res.status(500).json({ error: 'Error uploading resume' });
   }
 });
@@ -548,25 +600,21 @@ router.get('/download-original/:id', async (req, res) => {
   try {
     const resumeId = parseInt(req.params.id);
     const resume = await prisma.resume.findUnique({
-      where: { id: resumeId }
+      where: { id: resumeId },
+      select: { fileUrl: true, originalFileName: true } // Select only needed fields
     });
 
-    if (!resume) {
-      return res.status(404).json({ error: 'Resume not found' });
+    if (!resume || !resume.fileUrl) {
+      return res.status(404).json({ error: 'Resume file URL not found' });
     }
 
-    const filePath = path.join(uploadsDir, resume.fileName);
-    console.log('Attempting to download original file from:', filePath);
-    
-    if (!fs.existsSync(filePath)) {
-      console.error('File not found at path:', filePath);
-      return res.status(404).json({ error: 'File not found' });
-    }
+    console.log(`Redirecting download for original resume ${resumeId} to: ${resume.fileUrl}`);
+    // Directly redirect to the public blob URL
+    res.redirect(302, resume.fileUrl);
 
-    res.download(filePath, resume.originalFileName);
   } catch (error) {
     console.error('Download error:', error);
-    res.status(500).json({ error: 'Error downloading resume' });
+    res.status(500).json({ error: 'Error processing download for original resume' });
   }
 });
 
@@ -616,12 +664,17 @@ router.post('/:resumeId/detailed-ats-report', async (req, res) => {
         data: { status: 'detailed_ats_pending' }
     });
 
-    const filePath = path.join(uploadsDir, resume.fileName);
-    if (!fs.existsSync(filePath)) {
-      throw new Error('Resume file not found on server.');
+    if (!resume.fileUrl) {
+        await prisma.resume.update({ where: { id: resumeId }, data: { status: 'detailed_ats_failed' } }); // Update status
+        throw new Error('Resume file URL is missing.');
     }
-    const fileMimeType = require('mime-types').lookup(resume.fileName) || 'application/octet-stream';
-    const resumeText = await extractTextFromFile(filePath, fileMimeType);
+
+    // Determine mime type (assuming originalFileName has correct extension)
+    const fileMimeType = require('mime-types').lookup(resume.originalFileName) || 'application/octet-stream';
+    
+    // Fetch content from blob URL and extract text
+    console.log(`Fetching resume content from ${resume.fileUrl} for detailed ATS.`);
+    const resumeText = await extractTextFromFile(resume.fileUrl, fileMimeType);
 
     const analysisResult = await callGeminiForDetailedATS(resumeText);
 
@@ -776,12 +829,17 @@ router.post('/:resumeId/job-optimization', async (req, res) => {
         data: { status: 'job_opt_pending' }
     });
 
-    const filePath = path.join(uploadsDir, resume.fileName);
-    if (!fs.existsSync(filePath)) {
-      throw new Error('Resume file not found on server.');
+    if (!resume.fileUrl) {
+        await prisma.resume.update({ where: { id: resumeId }, data: { status: 'job_opt_failed' } }); // Update status
+        throw new Error('Resume file URL is missing.');
     }
-    const fileMimeType = require('mime-types').lookup(resume.fileName) || 'application/octet-stream';
-    const resumeText = await extractTextFromFile(filePath, fileMimeType);
+    
+    // Determine mime type
+    const fileMimeType = require('mime-types').lookup(resume.originalFileName) || 'application/octet-stream';
+
+    // Fetch content from blob URL and extract text
+    console.log(`Fetching resume content from ${resume.fileUrl} for job optimization.`);
+    const resumeText = await extractTextFromFile(resume.fileUrl, fileMimeType);
 
     const analysisResult = await callGeminiForJobOptimization(resumeText, resume.jobDescription);
 
@@ -916,7 +974,8 @@ router.get('/:resumeId/download-optimized', authenticateToken, async (req, res) 
 
   try {
     const resume = await prisma.resume.findUnique({
-      where: { id: resumeId }
+      where: { id: resumeId },
+      select: { userId: true, optimizedResume: true, originalFileName: true } // Select needed fields
     });
 
     if (!resume) {
@@ -933,30 +992,21 @@ router.get('/:resumeId/download-optimized', authenticateToken, async (req, res) 
       });
     }
 
-    const filePath = path.join(uploadsDir, resume.optimizedResume);
-    if (!fs.existsSync(filePath)) {
-      console.error(`Optimized file missing from disk: ${filePath} for resume ${resumeId}`);
-      await prisma.resume.update({
-          where: { id: resumeId },
-          data: { optimizedResume: null }
-      }).catch(err => console.error(`Failed to clear missing optimized file field for resume ${resumeId}`, err));
-      
-      return res.status(404).json({ 
-        error: 'File not found',
-        details: 'The optimized resume file is no longer available.'
-      });
+    // --- Assuming optimizedResume field now stores a URL --- 
+    // TODO: Confirm this assumption when updating admin routes
+    if (typeof resume.optimizedResume === 'string' && resume.optimizedResume.startsWith('http')) {
+      console.log(`Redirecting download for optimized resume ${resumeId} to: ${resume.optimizedResume}`);
+      res.redirect(302, resume.optimizedResume);
+    } else {
+      // Handle case where optimizedResume might still be a filename (needs admin route update)
+      console.error(`Optimized resume field for ${resumeId} is not a valid URL: ${resume.optimizedResume}`);
+      return res.status(500).json({ error: 'Optimized file path is misconfigured.'});
     }
-    
-    const originalExt = path.extname(resume.originalFileName);
-    const downloadName = `optimized-${path.basename(resume.originalFileName, originalExt)}${originalExt}`;
-
-    console.log(`User ${userId} downloading optimized file: ${filePath} as ${downloadName}`);
-    res.download(filePath, downloadName);
 
   } catch (error) {
     console.error(`Error downloading optimized resume ${resumeId} for user ${userId}:`, error);
     res.status(500).json({ 
-      error: 'Error downloading optimized resume',
+      error: 'Error processing download for optimized resume',
       details: error.message || 'An unexpected error occurred.'
     });
   }
@@ -981,13 +1031,12 @@ router.get('/:resumeId/text', async (req, res) => {
     let resumeText = resume.editedText;
 
     if (!resumeText) {
-        console.log(`No edited text found for resume ${resumeId}, extracting from original file.`);
-        const filePath = path.join(uploadsDir, resume.fileName);
-        if (!fs.existsSync(filePath)) {
-          throw new Error('Original resume file not found on server.');
+        console.log(`No edited text found for resume ${resumeId}, fetching from original file URL: ${resume.fileUrl}`);
+        if (!resume.fileUrl) {
+            throw new Error('Original resume file URL not found.');
         }
-        const fileMimeType = require('mime-types').lookup(resume.fileName) || 'application/octet-stream';
-        resumeText = await extractTextFromFile(filePath, fileMimeType);
+        const fileMimeType = require('mime-types').lookup(resume.originalFileName) || 'application/octet-stream';
+        resumeText = await extractTextFromFile(resume.fileUrl, fileMimeType);
     }
     
     res.json({ resumeId: resume.id, text: resumeText });
@@ -1042,6 +1091,7 @@ router.put('/:resumeId/text', async (req, res) => {
 // Free ATS check route (unchanged)
 freeATSRouter.post('/', upload.single('resume'), handleMulterError, async (req, res) => {
   let resumeRecord = null;
+  let blobUrl = null; // Need blob URL for free check too
   try {
     console.log('Received free ATS check request:', {
       file: req.file ? {
@@ -1066,9 +1116,26 @@ freeATSRouter.post('/', upload.single('resume'), handleMulterError, async (req, 
       return res.status(400).json({ error: 'Email is required' });
     }
 
+    // --- Vercel Blob Upload --- 
+    try {
+      const blobFilename = `free-${Date.now()}-${req.file.originalname}`;
+      const blob = await put(blobFilename, req.file.buffer, {
+        access: 'public',
+        contentType: req.file.mimetype,
+        addRandomSuffix: false,
+      });
+      blobUrl = blob.url;
+      console.log(`Free check file uploaded to Vercel Blob: ${blobUrl}`);
+    } catch (uploadError) {
+      console.error('Error uploading free check file to Vercel Blob:', uploadError);
+      // Don't delete local file as it's in memory
+      return res.status(500).json({ error: 'Failed to store uploaded file.' });
+    }
+    // --- End Vercel Blob Upload ---
+
     resumeRecord = await prisma.resume.create({
       data: {
-        fileName: req.file.filename,
+        fileUrl: blobUrl, // Save blob URL
         originalFileName: req.file.originalname,
         email: email,
         type: 'free_ats_check',

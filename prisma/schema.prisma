@@ -29,9 +29,9 @@ model User {
 
 model Resume {
   id                             Int       @id @default(autoincrement())
-  fileName                       String
+  fileUrl                        String    // <-- Add new field for Blob URL
   originalFileName               String
-  optimizedResume                String?
+  optimizedResume                String?   // This likely needs changing too if admins upload optimized files
   // Refined status values
   status                         String    @default("uploaded") // e.g., uploaded, basic_ats_pending, basic_ats_complete, detailed_ats_pending, detailed_ats_complete, job_opt_pending, job_opt_complete, pending_review, review_complete
   feedback                       Json?     // Changed type to Json
