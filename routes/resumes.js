@@ -599,26 +599,38 @@ router.get('/:id', async (req, res) => {
 router.get('/download-original/:id', async (req, res) => {
   try {
     const resumeId = parseInt(req.params.id);
-    console.log(`[Download Original] Received request for ID: ${resumeId}`);
+    // console.log(`[Download Original] Received request for ID: ${resumeId}`); // Keep logs just in case they appear later
 
     const resume = await prisma.resume.findUnique({
       where: { id: resumeId },
       select: { fileUrl: true, originalFileName: true } 
     });
 
-    console.log(`[Download Original] Prisma result for ID ${resumeId}:`, JSON.stringify(resume));
+    // console.log(`[Download Original] Prisma result for ID ${resumeId}:`, JSON.stringify(resume)); // Keep logs
 
-    if (!resume || !resume.fileUrl) { 
-      console.log(`[Download Original] Resume or fileUrl missing for ID ${resumeId}. fileUrl: ${resume?.fileUrl}`);
-      return res.status(404).json({ error: 'Resume file URL not found' }); 
+    // --- Modified Check --- 
+    if (!resume) {
+      // console.log(`[Download Original] Resume record not found for ID ${resumeId}.`); // Keep logs
+      // Return specific error if resume record itself wasn't found
+      return res.status(404).json({ error: 'Resume record not found in database', requestedId: resumeId }); 
     }
+    if (!resume.fileUrl) {
+      // console.log(`[Download Original] fileUrl is null/empty for ID ${resumeId}.`); // Keep logs
+      // Return specific error if resume was found BUT fileUrl is missing
+      return res.status(404).json({ error: 'Resume record found, but fileUrl is missing', requestedId: resumeId }); 
+    }
+    // --- End Modified Check ---
 
-    console.log(`[Download Original] Redirecting download for original resume ${resumeId} to: ${resume.fileUrl}`);
+    // console.log(`[Download Original] Redirecting download for original resume ${resumeId} to: ${resume.fileUrl}`); // Keep logs
     res.redirect(302, resume.fileUrl);
 
   } catch (error) {
-    console.error('Download error:', error);
-    res.status(500).json({ error: 'Error processing download for original resume' });
+    // console.error('Download error:', error); // Keep logs
+    // Add error details to the 500 response if possible
+    res.status(500).json({ 
+      error: 'Error processing download for original resume', 
+      details: error.message // Include error message
+    });
   }
 });
 
