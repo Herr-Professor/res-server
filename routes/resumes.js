@@ -599,17 +599,21 @@ router.get('/:id', async (req, res) => {
 router.get('/download-original/:id', async (req, res) => {
   try {
     const resumeId = parseInt(req.params.id);
+    console.log(`[Download Original] Received request for ID: ${resumeId}`);
+
     const resume = await prisma.resume.findUnique({
       where: { id: resumeId },
-      select: { fileUrl: true, originalFileName: true } // Select only needed fields
+      select: { fileUrl: true, originalFileName: true } 
     });
 
-    if (!resume || !resume.fileUrl) {
-      return res.status(404).json({ error: 'Resume file URL not found' });
+    console.log(`[Download Original] Prisma result for ID ${resumeId}:`, JSON.stringify(resume));
+
+    if (!resume || !resume.fileUrl) { 
+      console.log(`[Download Original] Resume or fileUrl missing for ID ${resumeId}. fileUrl: ${resume?.fileUrl}`);
+      return res.status(404).json({ error: 'Resume file URL not found' }); 
     }
 
-    console.log(`Redirecting download for original resume ${resumeId} to: ${resume.fileUrl}`);
-    // Directly redirect to the public blob URL
+    console.log(`[Download Original] Redirecting download for original resume ${resumeId} to: ${resume.fileUrl}`);
     res.redirect(302, resume.fileUrl);
 
   } catch (error) {

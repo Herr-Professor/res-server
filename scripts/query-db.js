@@ -35,7 +35,8 @@ async function main() {
     const resumes = await prisma.resume.findMany({
       select: {
         id: true,
-        fileName: true,
+        fileUrl: true,
+        originalFileName: true,
         status: true,
         userId: true,
         submittedAt: true,
@@ -66,55 +67,61 @@ async function main() {
 
     // If we have users, calculate stats for the first user
     if (users.length > 0) {
-      const userId = 37;
-      console.log(`Calculating stats for user ID: ${userId}`);
-      
-      const userResumes = await prisma.resume.findMany({
-        where: { userId },
-        select: { status: true },
-      });
-      
-      const userReviewOrders = await prisma.reviewOrder.findMany({
-        where: { userId },
-        select: { status: true },
-      });
-      
-      const userProfile = await prisma.user.findUnique({
-        where: { id: userId },
-        select: {
-          ppuAtsCredits: true,
-          ppuOptimizationCredits: true,
-        },
-      });
+      const targetUserId = 31;
+      const targetUser = users.find(user => user.id === targetUserId);
 
-      // Calculate stats similar to the /stats endpoint
-      const stats = {
-        resumesUploaded: userResumes.length,
-        analysesCompleted: {
-          basicAts: userResumes.filter(r => r.status === 'basic_ats_complete' || r.status === 'detailed_ats_complete').length,
-          detailedAts: userResumes.filter(r => r.status === 'detailed_ats_complete').length,
-          jobOpt: userResumes.filter(r => r.status === 'job_opt_complete').length,
-          review: userResumes.filter(r => r.status === 'review_complete').length,
-          total: userResumes.filter(r => 
-            r.status === 'basic_ats_complete' || 
-            r.status === 'detailed_ats_complete' || 
-            r.status === 'job_opt_complete' ||
-            r.status === 'review_complete'
-          ).length
-        },
-        pendingReviews: userReviewOrders.filter(r => 
-          r.status === 'requested' || 
-          r.status === 'in_progress'
-        ).length,
-        completedReviews: userReviewOrders.filter(r => 
-          r.status === 'completed'
-        ).length,
-        atsCredits: userProfile.ppuAtsCredits,
-        optimizationCredits: userProfile.ppuOptimizationCredits
-      };
+      if (targetUser) {
+        console.log(`Calculating stats for user ID: ${targetUserId}`);
+        
+        const userResumes = await prisma.resume.findMany({
+          where: { userId: targetUserId },
+          select: { status: true },
+        });
+        
+        const userReviewOrders = await prisma.reviewOrder.findMany({
+          where: { userId: targetUserId },
+          select: { status: true },
+        });
+        
+        const userProfile = await prisma.user.findUnique({
+          where: { id: targetUserId },
+          select: {
+            ppuAtsCredits: true,
+            ppuOptimizationCredits: true,
+          },
+        });
 
-      console.log(`=== CALCULATED STATS FOR USER ${userId} ===`);
-      console.log(JSON.stringify(stats, null, 2));
+        // Calculate stats similar to the /stats endpoint
+        const stats = {
+          resumesUploaded: userResumes.length,
+          analysesCompleted: {
+            basicAts: userResumes.filter(r => r.status === 'basic_ats_complete' || r.status === 'detailed_ats_complete').length,
+            detailedAts: userResumes.filter(r => r.status === 'detailed_ats_complete').length,
+            jobOpt: userResumes.filter(r => r.status === 'job_opt_complete').length,
+            review: userResumes.filter(r => r.status === 'review_complete').length,
+            total: userResumes.filter(r => 
+              r.status === 'basic_ats_complete' || 
+              r.status === 'detailed_ats_complete' || 
+              r.status === 'job_opt_complete' ||
+              r.status === 'review_complete'
+            ).length
+          },
+          pendingReviews: userReviewOrders.filter(r => 
+            r.status === 'requested' || 
+            r.status === 'in_progress'
+          ).length,
+          completedReviews: userReviewOrders.filter(r => 
+            r.status === 'completed'
+          ).length,
+          atsCredits: userProfile.ppuAtsCredits,
+          optimizationCredits: userProfile.ppuOptimizationCredits
+        };
+
+        console.log(`=== CALCULATED STATS FOR USER ${targetUserId} ===`);
+        console.log(JSON.stringify(stats, null, 2));
+      } else {
+        console.log('No users found in the database, skipping stats calculation.');
+      }
     } else {
       console.log('No users found in the database, skipping stats calculation.');
     }
